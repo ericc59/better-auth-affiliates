@@ -1,17 +1,9 @@
+import { hash } from "@better-auth/utils/hash"
 import { drizzle } from "drizzle-orm/postgres-js"
 import postgres from "postgres"
 import { account, affiliateLinks, referrals, user } from "./schema"
 
 const connectionString = process.env.DATABASE_URL!
-
-// Simple hash function for demo purposes (in production, Better Auth handles this)
-async function hashPassword(password: string): Promise<string> {
-	const encoder = new TextEncoder()
-	const data = encoder.encode(password)
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data)
-	const hashArray = Array.from(new Uint8Array(hashBuffer))
-	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("")
-}
 
 async function seed() {
 	const client = postgres(connectionString)
