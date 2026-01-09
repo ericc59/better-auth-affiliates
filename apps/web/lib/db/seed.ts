@@ -1,6 +1,7 @@
-import { hash } from "@better-auth/utils/hash"
+import { eq } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/postgres-js"
 import postgres from "postgres"
+import { auth } from "../auth"
 import { account, affiliateLinks, referrals, user } from "./schema"
 
 const connectionString = process.env.DATABASE_URL!
@@ -17,45 +18,41 @@ async function seed() {
 	await db.delete(account)
 	await db.delete(user)
 
-	// Create admin user
-	const adminId = "admin-user-id-12345"
-	const adminPassword = await hashPassword("admin123")
-
-	await db.insert(user).values({
-		id: adminId,
-		name: "Admin User",
-		email: "admin@example.com",
-		emailVerified: true,
+	// Create admin user using Better Auth's API (handles password hashing internally)
+	const adminUser = await auth.api.createUser({
+		body: {
+			email: "admin@example.com",
+			password: "admin123",
+			name: "Admin User",
+			role: "admin",
+		},
 	})
 
-	await db.insert(account).values({
-		id: "account-" + adminId,
-		userId: adminId,
-		accountId: "admin@example.com",
-		providerId: "credential",
-		password: adminPassword,
-	})
+	if (!adminUser?.user) {
+		throw new Error("Failed to create admin user")
+	}
+
+	// Mark email as verified
+	await db.update(user).set({ emailVerified: true }).where(eq(user.id, adminUser.user.id))
 
 	console.log("Created admin user: admin@example.com / admin123")
 
-	// Create demo user
-	const demoId = "demo-user-id-67890"
-	const demoPassword = await hashPassword("demo123")
-
-	await db.insert(user).values({
-		id: demoId,
-		name: "Demo User",
-		email: "demo@example.com",
-		emailVerified: true,
+	// Create demo user using Better Auth's API
+	const demoUser = await auth.api.createUser({
+		body: {
+			email: "demo@example.com",
+			password: "demo123",
+			name: "Demo User",
+			role: "user",
+		},
 	})
 
-	await db.insert(account).values({
-		id: "account-" + demoId,
-		userId: demoId,
-		accountId: "demo@example.com",
-		providerId: "credential",
-		password: demoPassword,
-	})
+	if (!demoUser?.user) {
+		throw new Error("Failed to create demo user")
+	}
+
+	// Mark email as verified
+	await db.update(user).set({ emailVerified: true }).where(eq(user.id, demoUser.user.id))
 
 	console.log("Created demo user: demo@example.com / demo123")
 
@@ -65,7 +62,7 @@ async function seed() {
 		.values({
 			code: "DEMO2024",
 			name: "Demo Partner Program",
-			userId: demoId, // Assign to demo user
+			userId: demoUser.user.id, // Assign to demo user
 			commissionRate: "15.00",
 			commissionType: "percentage",
 			clickCount: 1247,

@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
+import { admin } from "better-auth/plugins"
 import { db } from "./db"
 
 export const auth = betterAuth({
@@ -16,6 +17,7 @@ export const auth = betterAuth({
 		},
 	},
 	trustedOrigins: [process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"],
+	plugins: [admin()],
 })
 
 export type Session = typeof auth.$Infer.Session
