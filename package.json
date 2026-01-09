@@ -1,6 +1,6 @@
 {
-	"name": "shadcn-ui-monorepo",
-	"version": "0.0.1",
+	"name": "better-auth-affiliates-monorepo",
+	"version": "0.1.0",
 	"private": true,
 	"author": "Eric Campbell <eric@campbell.ventures>",
 	"license": "MIT",
@@ -11,6 +11,8 @@
 	"scripts": {
 		"build": "turbo build",
 		"dev": "turbo dev",
+		"test": "bun run --cwd packages/better-auth-affiliates test",
+		"test:watch": "bun run --cwd packages/better-auth-affiliates test:watch",
 		"lint": "turbo lint",
 		"format": "biome format --write .",
 		"check": "biome check ."

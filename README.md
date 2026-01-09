@@ -192,6 +192,8 @@ bun run dev
 |---------|-------------|
 | `bun run dev` | Start development server |
 | `bun run build` | Build all packages |
+| `bun run test` | Run tests |
+| `bun run test:watch` | Run tests in watch mode |
 | `bun run lint` | Lint and format code |
 | `bun run db:push` | Push schema to database |
 | `bun run db:seed` | Seed demo data |
