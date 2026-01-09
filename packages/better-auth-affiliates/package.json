@@ -1,0 +1,30 @@
+{
+	"name": "better-auth-affiliates",
+	"version": "0.1.0",
+	"type": "module",
+	"main": "./src/index.ts",
+	"types": "./src/index.ts",
+	"exports": {
+		".": "./src/index.ts",
+		"./client": "./src/client.ts"
+	},
+	"dependencies": {
+		"zod": "^3.24.2"
+	},
+	"peerDependencies": {
+		"better-auth": ">=1.4.0"
+	},
+	"devDependencies": {
+		"@workspace/typescript-config": "workspace:*",
+		"better-auth": "^1.4.10",
+		"prettier": "^3.7.4",
+		"turbo": "^2.6.3",
+		"typescript": "5.7.3"
+	},
+	"scripts": {
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"typecheck": "tsc --noEmit",
+		"clean": "rm -rf node_modules && rm -rf .turbo"
+	}
+}

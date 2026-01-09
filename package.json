@@ -1,0 +1,28 @@
+{
+	"name": "shadcn-ui-monorepo",
+	"version": "0.0.1",
+	"private": true,
+	"author": "Eric Campbell <eric@campbell.ventures>",
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
+	"workspaces": ["apps/*", "packages/*"],
+	"scripts": {
+		"build": "turbo build",
+		"dev": "turbo dev",
+		"lint": "turbo lint",
+		"format": "biome format --write .",
+		"check": "biome check ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^1.9.4",
+		"@workspace/typescript-config": "workspace:*",
+		"turbo": "^2.6.3",
+		"typescript": "5.7.3"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"packageManager": "bun@1.2.19"
+}
