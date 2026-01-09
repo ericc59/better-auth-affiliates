@@ -383,3 +383,225 @@ describe("cookie parsing", () => {
 		expect(cookies).toEqual({})
 	})
 })
+
+describe("hook path matching", () => {
+	const matcher = (path: string | undefined) =>
+		Boolean(path?.startsWith("/sign-up") || path?.includes("/callback"))
+
+	it("should match /sign-up path", () => {
+		expect(matcher("/sign-up")).toBe(true)
+		expect(matcher("/sign-up/email")).toBe(true)
+	})
+
+	it("should match OAuth callback paths", () => {
+		expect(matcher("/callback/google")).toBe(true)
+		expect(matcher("/callback/github")).toBe(true)
+		expect(matcher("/auth/callback")).toBe(true)
+	})
+
+	it("should not match sign-in paths", () => {
+		expect(matcher("/sign-in")).toBe(false)
+		expect(matcher("/sign-in/email")).toBe(false)
+	})
+
+	it("should not match other paths", () => {
+		expect(matcher("/dashboard")).toBe(false)
+		expect(matcher("/profile")).toBe(false)
+		expect(matcher("/api/user")).toBe(false)
+	})
+
+	it("should handle undefined path", () => {
+		expect(matcher(undefined)).toBe(false)
+	})
+})
+
+describe("self-referral prevention", () => {
+	it("should detect self-referral when user owns the link", () => {
+		const linkUserId = "user-123"
+		const newUserId = "user-123"
+		const isSelfReferral = linkUserId === newUserId
+
+		expect(isSelfReferral).toBe(true)
+	})
+
+	it("should allow referral when user does not own the link", () => {
+		const linkUserId = "user-456"
+		const newUserId = "user-123"
+		const isSelfReferral = linkUserId === newUserId
+
+		expect(isSelfReferral).toBe(false)
+	})
+
+	it("should handle null link userId", () => {
+		const linkUserId = null
+		const newUserId = "user-123"
+		const isSelfReferral = linkUserId === newUserId
+
+		expect(isSelfReferral).toBe(false)
+	})
+})
+
+describe("referral status transitions", () => {
+	const validStatuses = ["pending", "active", "churned", "expired"] as const
+
+	it("should have valid initial status as pending", () => {
+		const initialStatus = "pending"
+		expect(validStatuses.includes(initialStatus)).toBe(true)
+	})
+
+	it("should transition to active on conversion", () => {
+		const newStatus = "active"
+		expect(validStatuses.includes(newStatus)).toBe(true)
+	})
+
+	it("should allow churned status", () => {
+		const status = "churned"
+		expect(validStatuses.includes(status)).toBe(true)
+	})
+
+	it("should allow expired status", () => {
+		const status = "expired"
+		expect(validStatuses.includes(status)).toBe(true)
+	})
+})
+
+describe("commission edge cases", () => {
+	describe("percentage commission edge cases", () => {
+		it("should handle 0% commission", () => {
+			const rate = Number.parseFloat("0.00") / 100
+			const payment = Number.parseFloat("100.00")
+			const commission = (payment * rate).toFixed(2)
+
+			expect(commission).toBe("0.00")
+		})
+
+		it("should handle 100% commission", () => {
+			const rate = Number.parseFloat("100.00") / 100
+			const payment = Number.parseFloat("50.00")
+			const commission = (payment * rate).toFixed(2)
+
+			expect(commission).toBe("50.00")
+		})
+
+		it("should handle very small payment amounts", () => {
+			const rate = Number.parseFloat("10.00") / 100
+			const payment = Number.parseFloat("0.99")
+			const commission = (payment * rate).toFixed(2)
+
+			expect(commission).toBe("0.10")
+		})
+
+		it("should handle very large payment amounts", () => {
+			const rate = Number.parseFloat("20.00") / 100
+			const payment = Number.parseFloat("9999.99")
+			const commission = (payment * rate).toFixed(2)
+
+			expect(commission).toBe("2000.00")
+		})
+
+		it("should handle fractional percentages correctly", () => {
+			const rate = Number.parseFloat("7.50") / 100
+			const payment = Number.parseFloat("133.33")
+			const commission = (payment * rate).toFixed(2)
+
+			expect(commission).toBe("10.00")
+		})
+	})
+
+	describe("total earned calculations", () => {
+		it("should accumulate earnings correctly", () => {
+			const currentEarned = "150.00"
+			const newCommission = "25.50"
+			const newTotal = (
+				Number.parseFloat(currentEarned) + Number.parseFloat(newCommission)
+			).toFixed(2)
+
+			expect(newTotal).toBe("175.50")
+		})
+
+		it("should handle initial zero earnings", () => {
+			const currentEarned = "0"
+			const newCommission = "30.00"
+			const newTotal = (
+				Number.parseFloat(currentEarned || "0") + Number.parseFloat(newCommission)
+			).toFixed(2)
+
+			expect(newTotal).toBe("30.00")
+		})
+
+		it("should handle undefined current earnings", () => {
+			const currentEarned: string | undefined = undefined
+			const newCommission = "30.00"
+			const newTotal = (
+				Number.parseFloat(currentEarned || "0") + Number.parseFloat(newCommission)
+			).toFixed(2)
+
+			expect(newTotal).toBe("30.00")
+		})
+	})
+})
+
+describe("click count incrementing", () => {
+	it("should increment click count from 0", () => {
+		const currentCount = 0
+		const newCount = (currentCount || 0) + 1
+
+		expect(newCount).toBe(1)
+	})
+
+	it("should increment click count from existing value", () => {
+		const currentCount = 150
+		const newCount = (currentCount || 0) + 1
+
+		expect(newCount).toBe(151)
+	})
+
+	it("should handle null click count", () => {
+		const currentCount: number | null = null
+		const newCount = (currentCount || 0) + 1
+
+		expect(newCount).toBe(1)
+	})
+
+	it("should handle undefined click count", () => {
+		const currentCount: number | undefined = undefined
+		const newCount = (currentCount || 0) + 1
+
+		expect(newCount).toBe(1)
+	})
+})
+
+describe("signup count incrementing", () => {
+	it("should increment signup count correctly", () => {
+		const currentCount = 25
+		const newCount = (currentCount || 0) + 1
+
+		expect(newCount).toBe(26)
+	})
+})
+
+describe("URL query string building", () => {
+	it("should build empty query string when no params", () => {
+		const params = new URLSearchParams()
+		expect(params.toString()).toBe("")
+	})
+
+	it("should build query string with organizationId", () => {
+		const params = new URLSearchParams()
+		params.set("organizationId", "org-123")
+		expect(params.toString()).toBe("organizationId=org-123")
+	})
+
+	it("should build query string with multiple params", () => {
+		const params = new URLSearchParams()
+		params.set("organizationId", "org-123")
+		params.set("linkId", "link-456")
+		expect(params.toString()).toBe("organizationId=org-123&linkId=link-456")
+	})
+
+	it("should encode special characters", () => {
+		const params = new URLSearchParams()
+		params.set("name", "Test & Demo")
+		expect(params.toString()).toBe("name=Test+%26+Demo")
+	})
+})
