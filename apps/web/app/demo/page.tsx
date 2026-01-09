@@ -1,114 +1,87 @@
 "use client"
 
-import { CodeBlock } from "@/components/code-block"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { signIn, signOut, useSession } from "@/lib/auth-client"
 import { AffiliateDashboard } from "@workspace/elements/components/affiliate-dashboard"
-import { AffiliateLinkCard } from "@workspace/elements/components/affiliate-link-card"
-import { AffiliateStatsCard } from "@workspace/elements/components/affiliate-stats-card"
-import { CommissionBadge } from "@workspace/elements/components/commission-badge"
-import { EarningsSummary } from "@workspace/elements/components/earnings-summary"
-import { ReferralList } from "@workspace/elements/components/referral-list"
 import { Button } from "@workspace/ui/components/button"
-import { ArrowLeft, Check, Copy, Github, Info, Link2, Package, Terminal } from "lucide-react"
+import { ArrowLeft, Github, Link2, Loader2, LogOut, Plus, Sparkles } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
-// Demo data
-const demoAffiliateLink = {
-	id: "demo-1",
-	code: "DEMO2024",
-	name: "Demo Partner Program",
-	commissionRate: "15.00",
-	commissionType: "percentage" as const,
-	fixedAmount: null,
-	clickCount: 1247,
-	signupCount: 89,
-	paidReferralCount: 67,
-	totalEarned: "2847.50",
-	isActive: true,
-	expiresAt: null,
+type AffiliateLink = {
+	id: string
+	code: string
+	name: string | null
+	commissionRate: string
+	commissionType: "percentage" | "fixed"
+	fixedAmount: string | null
+	clickCount: number
+	signupCount: number
+	paidReferralCount: number
+	totalEarned: string
+	isActive: boolean
+	expiresAt: Date | null
 }
 
-const demoReferrals = [
-	{
-		id: "ref-1",
-		email: "john.doe@example.com",
-		status: "paid" as const,
-		amount: "45.00",
-		createdAt: new Date("2024-12-01"),
-		paidAt: new Date("2024-12-15"),
-	},
-	{
-		id: "ref-2",
-		email: "jane.smith@example.com",
-		status: "paid" as const,
-		amount: "67.50",
-		createdAt: new Date("2024-12-05"),
-		paidAt: new Date("2024-12-18"),
-	},
-	{
-		id: "ref-3",
-		email: "alex.wilson@example.com",
-		status: "converted" as const,
-		amount: "52.50",
-		createdAt: new Date("2024-12-20"),
-	},
-	{
-		id: "ref-4",
-		email: "sarah.johnson@example.com",
-		status: "pending" as const,
-		createdAt: new Date("2024-12-28"),
-	},
-	{
-		id: "ref-5",
-		email: "mike.brown@example.com",
-		status: "pending" as const,
-		createdAt: new Date("2024-12-30"),
-	},
-]
-
-const usageCode = `import { AffiliateDashboard } from "@workspace/elements"
-
-export default function MyAffiliatePage() {
-  return (
-    <AffiliateDashboard
-      affiliateLink={affiliateData}
-      referrals={referrals}
-      baseUrl="https://yourapp.com"
-      pendingEarnings={100}
-      availableForPayout={500}
-    />
-  )
-}`
-
-function CopyButton({ text }: { text: string }) {
-	const [copied, setCopied] = useState(false)
-
-	const handleCopy = async () => {
-		await navigator.clipboard.writeText(text)
-		setCopied(true)
-		setTimeout(() => setCopied(false), 2000)
-	}
-
-	return (
-		<button
-			type="button"
-			onClick={handleCopy}
-			className="flex items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-		>
-			{copied ? <Check className="size-4 text-green-500" /> : <Copy className="size-4" />}
-		</button>
-	)
+type Referral = {
+	id: string
+	email: string
+	status: "pending" | "converted" | "paid" | "rejected"
+	amount?: string
+	createdAt: Date
+	paidAt?: Date
 }
 
 export default function DemoPage() {
-	const pendingEarnings = demoReferrals
-		.filter((r) => r.status === "converted")
-		.reduce((sum, r) => sum + Number(r.amount || 0), 0)
+	const { data: session, isPending } = useSession()
+	const [affiliateData, setAffiliateData] = useState<{
+		link: AffiliateLink
+		referrals: Referral[]
+	} | null>(null)
+	const [isLoading, setIsLoading] = useState(true)
 
-	const availableForPayout = demoReferrals
-		.filter((r) => r.status === "paid")
-		.reduce((sum, r) => sum + Number(r.amount || 0), 0)
+	useEffect(() => {
+		async function fetchData() {
+			if (!session?.user) {
+				setIsLoading(false)
+				return
+			}
+
+			try {
+				const response = await fetch("/api/affiliate/data")
+				if (response.ok) {
+					const data = await response.json()
+					setAffiliateData(data)
+				}
+			} catch (error) {
+				console.error("Failed to fetch affiliate data:", error)
+			} finally {
+				setIsLoading(false)
+			}
+		}
+
+		if (!isPending) {
+			fetchData()
+		}
+	}, [session, isPending])
+
+	const pendingEarnings =
+		affiliateData?.referrals
+			.filter((r) => r.status === "converted")
+			.reduce((sum, r) => sum + Number(r.amount || 0), 0) ?? 0
+
+	const availableForPayout =
+		affiliateData?.referrals
+			.filter((r) => r.status === "paid")
+			.reduce((sum, r) => sum + Number(r.amount || 0), 0) ?? 0
+
+	const handleSignIn = () => {
+		signIn.social({ provider: "google", callbackURL: "/demo" })
+	}
+
+	const handleSignOut = () => {
+		signOut({ fetchOptions: { onSuccess: () => setAffiliateData(null) } })
+	}
 
 	return (
 		<div className="min-h-svh bg-background text-foreground">
@@ -127,12 +100,22 @@ export default function DemoPage() {
 							<div className="flex size-6 items-center justify-center rounded bg-foreground">
 								<Link2 className="size-3 text-background" />
 							</div>
-							<span className="font-medium">Component Demo</span>
+							<span className="font-medium">Live Dashboard</span>
 						</div>
 					</div>
 
 					<div className="flex items-center gap-2">
 						<ThemeToggle />
+						{session?.user && (
+							<>
+								<span className="hidden text-sm text-muted-foreground sm:inline">
+									{session.user.email}
+								</span>
+								<Button variant="ghost" size="sm" onClick={handleSignOut}>
+									<LogOut className="size-4" />
+								</Button>
+							</>
+						)}
 						<Link
 							href="https://github.com"
 							className="flex items-center gap-2 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -149,197 +132,96 @@ export default function DemoPage() {
 				<div className="mx-auto max-w-6xl px-6">
 					<div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
 						<div>
-							<h1 className="mb-2 text-3xl font-bold">Component Showcase</h1>
+							<div className="mb-2 flex items-center gap-2">
+								<h1 className="text-3xl font-bold">Affiliate Dashboard</h1>
+								<span className="flex items-center gap-1 rounded-full bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-600 dark:text-green-400">
+									<span className="size-1.5 animate-pulse rounded-full bg-green-500" />
+									Live
+								</span>
+							</div>
 							<p className="text-muted-foreground">
-								Pre-built React components for affiliate dashboards. Copy, paste, customize.
+								{session?.user
+									? "Your real-time affiliate performance data."
+									: "Sign in with Google to see your affiliate dashboard."}
 							</p>
 						</div>
-						<div className="flex items-center gap-2 rounded-lg border border-border bg-card p-2">
-							<Package className="size-4 text-muted-foreground" />
-							<code className="font-mono text-sm">@workspace/elements</code>
-							<CopyButton text="npm install @workspace/elements" />
-						</div>
+						<Link href="/elements">
+							<Button variant="outline" className="gap-2">
+								<Sparkles className="size-4" />
+								View Components
+							</Button>
+						</Link>
 					</div>
 				</div>
 			</section>
 
 			{/* Main Content */}
 			<main className="mx-auto max-w-6xl px-6 py-12">
-				{/* Demo Notice */}
-				<div className="mb-12 flex items-start gap-4 rounded-lg border border-border bg-card p-4">
-					<Info className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-					<div>
-						<p className="mb-1 font-medium">Using demo data</p>
-						<p className="text-sm text-muted-foreground">
-							Connect a database to see live data. Run{" "}
-							<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-								bun run db:push && bun run db:seed
-							</code>{" "}
-							to get started.
-						</p>
+				{isPending || isLoading ? (
+					<div className="flex flex-col items-center justify-center py-20">
+						<Loader2 className="size-8 animate-spin text-muted-foreground" />
+						<p className="mt-4 text-sm text-muted-foreground">Loading...</p>
 					</div>
-				</div>
-
-				{/* Full Dashboard */}
-				<section className="mb-16">
-					<div className="mb-6 flex items-center justify-between">
-						<div>
-							<h2 className="text-xl font-semibold">Full Dashboard</h2>
-							<p className="text-sm text-muted-foreground">Complete AffiliateDashboard component</p>
+				) : !session?.user ? (
+					<div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 py-20">
+						<div className="mb-4 flex size-16 items-center justify-center rounded-full bg-muted">
+							<Link2 className="size-8 text-muted-foreground" />
 						</div>
-						<span className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-muted-foreground">
-							{"<AffiliateDashboard />"}
-						</span>
+						<h2 className="mb-2 text-xl font-semibold">Sign in to continue</h2>
+						<p className="mb-6 max-w-md text-center text-muted-foreground">
+							Sign in with your Google account to view your affiliate dashboard and track your
+							referral performance.
+						</p>
+						<Button onClick={handleSignIn} size="lg" className="gap-2">
+							<svg className="size-5" viewBox="0 0 24 24">
+								<path
+									fill="currentColor"
+									d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+								/>
+								<path
+									fill="currentColor"
+									d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+								/>
+								<path
+									fill="currentColor"
+									d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+								/>
+								<path
+									fill="currentColor"
+									d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+								/>
+							</svg>
+							Sign in with Google
+						</Button>
 					</div>
-
+				) : affiliateData ? (
 					<div className="overflow-hidden rounded-lg border border-border bg-card p-6">
 						<AffiliateDashboard
-							affiliateLink={demoAffiliateLink}
-							referrals={demoReferrals}
-							baseUrl="https://yourapp.com"
+							affiliateLink={affiliateData.link}
+							referrals={affiliateData.referrals}
+							baseUrl={process.env.NEXT_PUBLIC_APP_URL || "https://yourapp.com"}
 							pendingEarnings={pendingEarnings}
 							availableForPayout={availableForPayout}
 						/>
 					</div>
-				</section>
-
-				{/* Individual Components */}
-				<section className="mb-16">
-					<h2 className="mb-8 text-xl font-semibold">Individual Components</h2>
-
-					{/* Stats Cards */}
-					<div className="mb-10">
-						<div className="mb-4 flex items-center justify-between">
-							<span className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-muted-foreground">
-								{"<AffiliateStatsCard />"}
-							</span>
-							<span className="text-xs text-muted-foreground">4 variants</span>
+				) : (
+					<div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 py-20">
+						<div className="mb-4 flex size-16 items-center justify-center rounded-full bg-muted">
+							<Plus className="size-8 text-muted-foreground" />
 						</div>
-						<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-							<AffiliateStatsCard
-								title="Total Clicks"
-								value={demoAffiliateLink.clickCount}
-								icon="clicks"
-								trend={{ value: 12.5, isPositive: true }}
-							/>
-							<AffiliateStatsCard
-								title="Signups"
-								value={demoAffiliateLink.signupCount}
-								icon="signups"
-								trend={{ value: 8.2, isPositive: true }}
-							/>
-							<AffiliateStatsCard
-								title="Total Earned"
-								value={demoAffiliateLink.totalEarned}
-								icon="earnings"
-								format="currency"
-								variant="success"
-							/>
-							<AffiliateStatsCard
-								title="Conversion Rate"
-								value={(
-									(demoAffiliateLink.signupCount / demoAffiliateLink.clickCount) *
-									100
-								).toFixed(1)}
-								icon="conversion"
-								format="percentage"
-							/>
+						<h2 className="mb-2 text-xl font-semibold">No affiliate links yet</h2>
+						<p className="mb-6 max-w-md text-center text-muted-foreground">
+							You don't have any affiliate links yet. Create your first link to start tracking
+							referrals.
+						</p>
+						<div className="flex flex-col items-center gap-3 sm:flex-row">
+							<code className="rounded-lg border border-border bg-background px-4 py-2 font-mono text-sm">
+								bun run db:seed
+							</code>
+							<span className="text-sm text-muted-foreground">to add demo data</span>
 						</div>
 					</div>
-
-					{/* Commission Badges */}
-					<div className="mb-10">
-						<div className="mb-4 flex items-center justify-between">
-							<span className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-muted-foreground">
-								{"<CommissionBadge />"}
-							</span>
-							<span className="text-xs text-muted-foreground">2 types, 3 sizes</span>
-						</div>
-						<div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-card p-6">
-							<CommissionBadge type="percentage" rate="15.00" size="sm" />
-							<CommissionBadge type="percentage" rate="20.00" />
-							<CommissionBadge type="percentage" rate="25.00" size="lg" />
-							<div className="h-8 w-px bg-border" />
-							<CommissionBadge type="fixed" rate="50.00" fixedAmount="50.00" />
-							<CommissionBadge type="fixed" rate="100.00" fixedAmount="100.00" size="lg" />
-						</div>
-					</div>
-
-					{/* Affiliate Link Cards */}
-					<div className="mb-10">
-						<div className="mb-4 flex items-center justify-between">
-							<span className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-muted-foreground">
-								{"<AffiliateLinkCard />"}
-							</span>
-							<span className="text-xs text-muted-foreground">active & expired states</span>
-						</div>
-						<div className="grid gap-4 lg:grid-cols-2">
-							<AffiliateLinkCard
-								code={demoAffiliateLink.code}
-								name={demoAffiliateLink.name}
-								baseUrl="https://yourapp.com"
-								isActive={demoAffiliateLink.isActive}
-							/>
-							<AffiliateLinkCard
-								code="EXPIRED01"
-								name="Expired Campaign"
-								baseUrl="https://yourapp.com"
-								isActive={false}
-								expiresAt={new Date("2024-01-01")}
-							/>
-						</div>
-					</div>
-
-					{/* Earnings Summary */}
-					<div className="mb-10">
-						<div className="mb-4 flex items-center justify-between">
-							<span className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-muted-foreground">
-								{"<EarningsSummary />"}
-							</span>
-							<span className="text-xs text-muted-foreground">3 metrics</span>
-						</div>
-						<EarningsSummary
-							totalEarned={demoAffiliateLink.totalEarned}
-							pendingEarnings={pendingEarnings}
-							availableForPayout={availableForPayout}
-						/>
-					</div>
-
-					{/* Referral List */}
-					<div className="mb-10">
-						<div className="mb-4 flex items-center justify-between">
-							<span className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-muted-foreground">
-								{"<ReferralList />"}
-							</span>
-							<span className="text-xs text-muted-foreground">with status badges</span>
-						</div>
-						<ReferralList referrals={demoReferrals} />
-					</div>
-
-					{/* Empty State */}
-					<div>
-						<div className="mb-4 flex items-center justify-between">
-							<span className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-muted-foreground">
-								{"<ReferralList /> empty"}
-							</span>
-							<span className="text-xs text-muted-foreground">empty state</span>
-						</div>
-						<ReferralList
-							referrals={[]}
-							emptyMessage="No referrals yet. Share your link to get started!"
-						/>
-					</div>
-				</section>
-
-				{/* Usage Code */}
-				<section>
-					<div className="mb-6">
-						<h2 className="text-xl font-semibold">Quick Start</h2>
-						<p className="text-sm text-muted-foreground">Import and use in your Next.js app</p>
-					</div>
-
-					<CodeBlock code={usageCode} language="tsx" filename="page.tsx" />
-				</section>
+				)}
 			</main>
 
 			{/* Footer */}
@@ -347,17 +229,24 @@ export default function DemoPage() {
 				<div className="mx-auto max-w-6xl px-6">
 					<div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
 						<p className="text-sm text-muted-foreground">
-							Components from{" "}
+							Powered by{" "}
 							<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-								@workspace/elements
+								better-auth-affiliates
 							</code>
 						</p>
-						<Link href="/">
-							<Button variant="outline" size="sm">
-								<ArrowLeft className="size-4" />
-								Back to Home
-							</Button>
-						</Link>
+						<div className="flex items-center gap-2">
+							<Link href="/elements">
+								<Button variant="outline" size="sm">
+									Component Library
+								</Button>
+							</Link>
+							<Link href="/">
+								<Button variant="ghost" size="sm">
+									<ArrowLeft className="size-4" />
+									Back to Home
+								</Button>
+							</Link>
+						</div>
 					</div>
 				</div>
 			</footer>
