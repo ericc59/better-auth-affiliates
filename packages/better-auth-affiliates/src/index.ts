@@ -67,6 +67,26 @@ export interface AffiliateCommission {
 	updatedAt: Date
 }
 
+/**
+ * Commission tier for performance-based rates
+ */
+export interface CommissionTier {
+	/**
+	 * Minimum number of paid referrals to reach this tier
+	 */
+	minPaidReferrals: number
+	/**
+	 * Commission rate for this tier
+	 * For percentage: "30.00" = 30%
+	 * For fixed: dollar amount
+	 */
+	rate: string
+	/**
+	 * Optional tier name (e.g., "Bronze", "Silver", "Gold")
+	 */
+	name?: string
+}
+
 export interface AffiliatePluginOptions {
 	/**
 	 * Default commission rate for all affiliate links
@@ -78,6 +98,19 @@ export interface AffiliatePluginOptions {
 	 * Commission type: percentage or fixed amount
 	 */
 	commissionType: "percentage" | "fixed"
+	/**
+	 * Optional commission tiers for performance-based rates
+	 * Tiers are checked in order - the highest qualifying tier is used
+	 * Example:
+	 * ```
+	 * commissionTiers: [
+	 *   { minPaidReferrals: 0, rate: "20.00", name: "Bronze" },
+	 *   { minPaidReferrals: 10, rate: "25.00", name: "Silver" },
+	 *   { minPaidReferrals: 50, rate: "30.00", name: "Gold" },
+	 * ]
+	 * ```
+	 */
+	commissionTiers?: CommissionTier[]
 	/**
 	 * Duration in months for recurring commissions (for percentage type)
 	 * Example: 12 = earn commission for 12 months
@@ -114,21 +147,92 @@ export interface AffiliatePluginOptions {
 		affiliateLink: AffiliateLink
 		commission: AffiliateCommission
 	}) => Promise<void>
+	/**
+	 * Optional callback when an affiliate reaches a new tier
+	 */
+	onTierUpgrade?: (data: {
+		affiliateLink: AffiliateLink
+		previousTier: CommissionTier | null
+		newTier: CommissionTier
+	}) => Promise<void>
 }
 
 /**
- * Calculate commission amount based on link settings
+ * Get the current tier for an affiliate based on their performance
+ * Returns the highest tier they qualify for, or null if no tiers configured
+ */
+export function getTierForAffiliate(
+	paidReferralCount: number,
+	tiers?: CommissionTier[],
+): CommissionTier | null {
+	if (!tiers || tiers.length === 0) return null
+
+	// Sort tiers by minPaidReferrals descending to find highest qualifying tier
+	const sortedTiers = [...tiers].sort((a, b) => b.minPaidReferrals - a.minPaidReferrals)
+
+	for (const tier of sortedTiers) {
+		if (paidReferralCount >= tier.minPaidReferrals) {
+			return tier
+		}
+	}
+
+	// Return lowest tier if none match (shouldn't happen if tier with minPaidReferrals: 0 exists)
+	return sortedTiers[sortedTiers.length - 1] || null
+}
+
+/**
+ * Get the next tier an affiliate can reach
+ * Returns null if already at highest tier or no tiers configured
+ */
+export function getNextTier(
+	paidReferralCount: number,
+	tiers?: CommissionTier[],
+): { tier: CommissionTier; referralsNeeded: number } | null {
+	if (!tiers || tiers.length === 0) return null
+
+	// Sort tiers by minPaidReferrals ascending
+	const sortedTiers = [...tiers].sort((a, b) => a.minPaidReferrals - b.minPaidReferrals)
+
+	for (const tier of sortedTiers) {
+		if (tier.minPaidReferrals > paidReferralCount) {
+			return {
+				tier,
+				referralsNeeded: tier.minPaidReferrals - paidReferralCount,
+			}
+		}
+	}
+
+	return null // Already at highest tier
+}
+
+/**
+ * Calculate commission amount based on link settings and optional tier
  */
 export function calculateCommission(
 	link: AffiliateLink,
 	paymentAmount: string | number,
+	options?: {
+		tiers?: CommissionTier[]
+		overrideRate?: string
+	},
 ): string {
-	if (link.commissionType === "percentage") {
-		const rate = Number.parseFloat(link.commissionRate) / 100
-		const payment = Number.parseFloat(String(paymentAmount))
-		return (payment * rate).toFixed(2)
+	// Determine the rate to use
+	let rate: string
+	if (options?.overrideRate) {
+		rate = options.overrideRate
+	} else if (options?.tiers && options.tiers.length > 0) {
+		const currentTier = getTierForAffiliate(link.paidReferralCount || 0, options.tiers)
+		rate = currentTier?.rate || link.commissionRate
+	} else {
+		rate = link.commissionRate
 	}
-	return link.fixedAmount || link.commissionRate
+
+	if (link.commissionType === "percentage") {
+		const rateNum = Number.parseFloat(rate) / 100
+		const payment = Number.parseFloat(String(paymentAmount))
+		return (payment * rateNum).toFixed(2)
+	}
+	return link.fixedAmount || rate
 }
 
 /**
@@ -166,11 +270,13 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 	const {
 		commissionRate,
 		commissionType,
+		commissionTiers,
 		commissionDurationMonths = 12,
 		cookieDurationDays = 30,
 		onReferralSignup,
 		onReferralConversion,
 		onRecurringCommission,
+		onTierUpgrade,
 	} = options
 
 	return {
@@ -597,6 +703,10 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 						)
 					}
 
+					// Calculate tier information if tiers are configured
+					const currentTier = getTierForAffiliate(totalPaidReferrals, commissionTiers)
+					const nextTierInfo = getNextTier(totalPaidReferrals, commissionTiers)
+
 					return ctx.json({
 						success: true,
 						stats: {
@@ -607,16 +717,39 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 							unpaidCommission,
 							conversionRate:
 								totalClicks > 0 ? ((totalSignups / totalClicks) * 100).toFixed(2) : "0.00",
-							links: links.map((link) => ({
-								id: link.id,
-								code: link.code,
-								name: link.name,
-								clicks: link.clickCount,
-								signups: link.signupCount,
-								paidReferrals: link.paidReferralCount,
-								earned: link.totalEarned,
-							})),
+							links: links.map((link) => {
+								const linkTier = getTierForAffiliate(link.paidReferralCount || 0, commissionTiers)
+								return {
+									id: link.id,
+									code: link.code,
+									name: link.name,
+									clicks: link.clickCount,
+									signups: link.signupCount,
+									paidReferrals: link.paidReferralCount,
+									earned: link.totalEarned,
+									currentTier: linkTier
+										? { name: linkTier.name, rate: linkTier.rate }
+										: null,
+								}
+							}),
 							recentReferrals,
+							// Tier information (aggregate across all links)
+							currentTier: currentTier
+								? {
+										name: currentTier.name,
+										rate: currentTier.rate,
+										minPaidReferrals: currentTier.minPaidReferrals,
+									}
+								: null,
+							nextTier: nextTierInfo
+								? {
+										name: nextTierInfo.tier.name,
+										rate: nextTierInfo.tier.rate,
+										minPaidReferrals: nextTierInfo.tier.minPaidReferrals,
+										referralsNeeded: nextTierInfo.referralsNeeded,
+									}
+								: null,
+							tiersEnabled: Boolean(commissionTiers && commissionTiers.length > 0),
 						},
 					})
 				},
@@ -796,8 +929,13 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 						})
 					}
 
-					// Calculate commission
-					const commissionAmount = calculateCommission(link, paymentAmount)
+					// Get tier before this conversion (for upgrade detection)
+					const previousTier = getTierForAffiliate(link.paidReferralCount || 0, commissionTiers)
+
+					// Calculate commission using tiered rates if configured
+					const commissionAmount = calculateCommission(link, paymentAmount, {
+						tiers: commissionTiers,
+					})
 
 					const now = new Date()
 					const expiresAt = new Date()
@@ -834,17 +972,44 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 						},
 					})
 
+					const newPaidReferralCount = (link.paidReferralCount || 0) + 1
+
 					// Update affiliate link stats
 					await adapter.update<AffiliateLink>({
 						model: "affiliateLink",
 						where: [{ field: "id", value: link.id }],
 						update: {
-							paidReferralCount: (link.paidReferralCount || 0) + 1,
+							paidReferralCount: newPaidReferralCount,
 							totalEarned: (
 								Number.parseFloat(link.totalEarned || "0") + Number.parseFloat(commissionAmount)
 							).toFixed(2),
 						},
 					})
+
+					// Check for tier upgrade
+					const newTier = getTierForAffiliate(newPaidReferralCount, commissionTiers)
+					const tierUpgraded =
+						newTier &&
+						(!previousTier || newTier.minPaidReferrals > previousTier.minPaidReferrals)
+
+					// Call tier upgrade callback if applicable
+					if (tierUpgraded && onTierUpgrade) {
+						try {
+							const updatedLink = await adapter.findOne<AffiliateLink>({
+								model: "affiliateLink",
+								where: [{ field: "id", value: link.id }],
+							})
+							if (updatedLink) {
+								await onTierUpgrade({
+									affiliateLink: updatedLink,
+									previousTier,
+									newTier,
+								})
+							}
+						} catch (error) {
+							console.error("[Affiliate] onTierUpgrade callback error:", error)
+						}
+					}
 
 					// Call optional conversion callback
 					if (onReferralConversion) {
@@ -965,8 +1130,10 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 						})
 					}
 
-					// Calculate commission
-					const commissionAmount = calculateCommission(link, paymentAmount)
+					// Calculate commission using tiered rates if configured
+					const commissionAmount = calculateCommission(link, paymentAmount, {
+						tiers: commissionTiers,
+					})
 
 					const now = new Date()
 

@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest"
 import {
 	affiliatePlugin,
 	calculateCommission,
+	getTierForAffiliate,
+	getNextTier,
 	parseAffiliateCode,
 	stripeIntegration,
 	type AffiliateLink,
+	type CommissionTier,
 } from "./index"
 
 describe("affiliatePlugin", () => {
@@ -1025,5 +1028,193 @@ describe("commission type values", () => {
 
 	it("should have recurring as valid type", () => {
 		expect(validTypes.includes("recurring")).toBe(true)
+	})
+})
+
+describe("getTierForAffiliate", () => {
+	const tiers: CommissionTier[] = [
+		{ minPaidReferrals: 0, rate: "20.00", name: "Bronze" },
+		{ minPaidReferrals: 10, rate: "25.00", name: "Silver" },
+		{ minPaidReferrals: 25, rate: "30.00", name: "Gold" },
+		{ minPaidReferrals: 50, rate: "35.00", name: "Platinum" },
+	]
+
+	it("should return null when no tiers are provided", () => {
+		const tier = getTierForAffiliate(5, undefined)
+		expect(tier).toBeNull()
+	})
+
+	it("should return null when empty tiers array is provided", () => {
+		const tier = getTierForAffiliate(5, [])
+		expect(tier).toBeNull()
+	})
+
+	it("should return Bronze tier for 0 referrals", () => {
+		const tier = getTierForAffiliate(0, tiers)
+		expect(tier).toEqual({ minPaidReferrals: 0, rate: "20.00", name: "Bronze" })
+	})
+
+	it("should return Bronze tier for 9 referrals", () => {
+		const tier = getTierForAffiliate(9, tiers)
+		expect(tier).toEqual({ minPaidReferrals: 0, rate: "20.00", name: "Bronze" })
+	})
+
+	it("should return Silver tier for exactly 10 referrals", () => {
+		const tier = getTierForAffiliate(10, tiers)
+		expect(tier).toEqual({ minPaidReferrals: 10, rate: "25.00", name: "Silver" })
+	})
+
+	it("should return Silver tier for 24 referrals", () => {
+		const tier = getTierForAffiliate(24, tiers)
+		expect(tier).toEqual({ minPaidReferrals: 10, rate: "25.00", name: "Silver" })
+	})
+
+	it("should return Gold tier for exactly 25 referrals", () => {
+		const tier = getTierForAffiliate(25, tiers)
+		expect(tier).toEqual({ minPaidReferrals: 25, rate: "30.00", name: "Gold" })
+	})
+
+	it("should return Platinum tier for 50+ referrals", () => {
+		const tier = getTierForAffiliate(100, tiers)
+		expect(tier).toEqual({ minPaidReferrals: 50, rate: "35.00", name: "Platinum" })
+	})
+
+	it("should handle unsorted tiers", () => {
+		const unsortedTiers: CommissionTier[] = [
+			{ minPaidReferrals: 25, rate: "30.00" },
+			{ minPaidReferrals: 0, rate: "20.00" },
+			{ minPaidReferrals: 10, rate: "25.00" },
+		]
+		const tier = getTierForAffiliate(15, unsortedTiers)
+		expect(tier?.rate).toBe("25.00")
+	})
+})
+
+describe("getNextTier", () => {
+	const tiers: CommissionTier[] = [
+		{ minPaidReferrals: 0, rate: "20.00", name: "Bronze" },
+		{ minPaidReferrals: 10, rate: "25.00", name: "Silver" },
+		{ minPaidReferrals: 25, rate: "30.00", name: "Gold" },
+		{ minPaidReferrals: 50, rate: "35.00", name: "Platinum" },
+	]
+
+	it("should return null when no tiers are provided", () => {
+		const next = getNextTier(5, undefined)
+		expect(next).toBeNull()
+	})
+
+	it("should return null when empty tiers array is provided", () => {
+		const next = getNextTier(5, [])
+		expect(next).toBeNull()
+	})
+
+	it("should return Silver tier as next for 0 referrals", () => {
+		const next = getNextTier(0, tiers)
+		expect(next?.tier.name).toBe("Silver")
+		expect(next?.referralsNeeded).toBe(10)
+	})
+
+	it("should return Silver tier as next for 5 referrals", () => {
+		const next = getNextTier(5, tiers)
+		expect(next?.tier.name).toBe("Silver")
+		expect(next?.referralsNeeded).toBe(5)
+	})
+
+	it("should return Gold tier as next for 10 referrals", () => {
+		const next = getNextTier(10, tiers)
+		expect(next?.tier.name).toBe("Gold")
+		expect(next?.referralsNeeded).toBe(15)
+	})
+
+	it("should return Gold tier as next for 20 referrals", () => {
+		const next = getNextTier(20, tiers)
+		expect(next?.tier.name).toBe("Gold")
+		expect(next?.referralsNeeded).toBe(5)
+	})
+
+	it("should return Platinum tier as next for 30 referrals", () => {
+		const next = getNextTier(30, tiers)
+		expect(next?.tier.name).toBe("Platinum")
+		expect(next?.referralsNeeded).toBe(20)
+	})
+
+	it("should return null when at highest tier", () => {
+		const next = getNextTier(50, tiers)
+		expect(next).toBeNull()
+	})
+
+	it("should return null when above highest tier", () => {
+		const next = getNextTier(100, tiers)
+		expect(next).toBeNull()
+	})
+})
+
+describe("calculateCommission with tiers", () => {
+	const createMockLink = (paidReferralCount: number): AffiliateLink => ({
+		id: "link-1",
+		code: "TEST",
+		name: "Test Link",
+		userId: "user-1",
+		organizationId: null,
+		commissionRate: "20.00",
+		commissionType: "percentage",
+		fixedAmount: null,
+		clickCount: 0,
+		signupCount: 0,
+		paidReferralCount,
+		totalEarned: "0",
+		isActive: true,
+		expiresAt: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+	})
+
+	const tiers: CommissionTier[] = [
+		{ minPaidReferrals: 0, rate: "20.00", name: "Bronze" },
+		{ minPaidReferrals: 10, rate: "25.00", name: "Silver" },
+		{ minPaidReferrals: 25, rate: "30.00", name: "Gold" },
+	]
+
+	it("should use link rate when no tiers provided", () => {
+		const link = createMockLink(15)
+		const commission = calculateCommission(link, "100.00")
+		expect(commission).toBe("20.00")
+	})
+
+	it("should use Bronze tier rate for 0 referrals", () => {
+		const link = createMockLink(0)
+		const commission = calculateCommission(link, "100.00", { tiers })
+		expect(commission).toBe("20.00")
+	})
+
+	it("should use Silver tier rate for 15 referrals", () => {
+		const link = createMockLink(15)
+		const commission = calculateCommission(link, "100.00", { tiers })
+		expect(commission).toBe("25.00")
+	})
+
+	it("should use Gold tier rate for 30 referrals", () => {
+		const link = createMockLink(30)
+		const commission = calculateCommission(link, "100.00", { tiers })
+		expect(commission).toBe("30.00")
+	})
+
+	it("should use overrideRate when provided", () => {
+		const link = createMockLink(30)
+		const commission = calculateCommission(link, "100.00", { tiers, overrideRate: "50.00" })
+		expect(commission).toBe("50.00")
+	})
+
+	it("should calculate tiered commission with decimal payment", () => {
+		const link = createMockLink(10)
+		const commission = calculateCommission(link, "49.99", { tiers })
+		expect(commission).toBe("12.50")
+	})
+
+	it("should fall back to link rate if no matching tier", () => {
+		const link = createMockLink(5)
+		const emptyTiers: CommissionTier[] = []
+		const commission = calculateCommission(link, "100.00", { tiers: emptyTiers })
+		expect(commission).toBe("20.00")
 	})
 })

@@ -8,6 +8,7 @@ A complete affiliate and referral system plugin for [Better Auth](https://better
 - **Click Tracking** - Monitor clicks, conversions, and revenue in real-time
 - **Stripe Integration** - Automatic conversion tracking and recurring commissions via Stripe webhooks
 - **Recurring Commissions** - Track commissions on subscription renewals for a configurable duration
+- **Tiered Commissions** - Reward top performers with increasing commission rates based on referral count
 - **Partner Dashboard** - Pre-built React components for affiliates to track performance
 - **Better Auth Native** - Zero-config integration with your existing auth setup
 - **Type-Safe** - Full TypeScript support with Zod validation throughout
@@ -136,6 +137,73 @@ export const auth = betterAuth({
 4. **Recurring Commissions**: `handleStripeEvent()` listens for `invoice.paid` events and tracks recurring commissions
 5. **Commission Expiration**: Recurring commissions stop after `commissionDurationMonths` (configurable)
 
+## Tiered Commissions
+
+Reward your top-performing affiliates with increasing commission rates as they bring in more paying customers.
+
+### Configuration
+
+```typescript
+affiliatePlugin({
+  commissionRate: "20.00",        // Default rate for new affiliates
+  commissionType: "percentage",
+
+  // Define commission tiers based on paid referral count
+  commissionTiers: [
+    { minPaidReferrals: 0, rate: "20.00", name: "Bronze" },
+    { minPaidReferrals: 10, rate: "25.00", name: "Silver" },
+    { minPaidReferrals: 25, rate: "30.00", name: "Gold" },
+    { minPaidReferrals: 50, rate: "35.00", name: "Platinum" },
+  ],
+
+  // Optional: Get notified when affiliates level up
+  async onTierUpgrade({ affiliateLink, previousTier, newTier }) {
+    await sendEmail({
+      to: affiliateLink.userId,
+      subject: `Congratulations! You've reached ${newTier.name} tier!`,
+      body: `Your commission rate is now ${newTier.rate}%`,
+    })
+  },
+})
+```
+
+### How Tiers Work
+
+- Affiliates start at the lowest tier (based on `minPaidReferrals: 0`)
+- As they accumulate paid referrals, they automatically move to higher tiers
+- Commission rates are applied based on the affiliate's current `paidReferralCount`
+- The `onTierUpgrade` callback fires when an affiliate reaches a new tier
+- Tier progress is included in the stats endpoint for display in dashboards
+
+### Stats Response with Tiers
+
+When tiers are configured, the stats endpoint includes tier information:
+
+```typescript
+const { stats } = await authClient.affiliate.getStats()
+
+// stats includes:
+// - currentTier: { minPaidReferrals: 10, rate: "25.00", name: "Silver" }
+// - nextTier: { tier: { ... }, referralsNeeded: 15 }
+// - tiersEnabled: true
+```
+
+### Helper Functions
+
+The plugin exports helper functions for building custom UIs:
+
+```typescript
+import { getTierForAffiliate, getNextTier } from "better-auth-affiliates"
+
+// Get current tier based on referral count
+const currentTier = getTierForAffiliate(15, tiers)
+// Returns: { minPaidReferrals: 10, rate: "25.00", name: "Silver" }
+
+// Get next tier and referrals needed
+const nextTier = getNextTier(15, tiers)
+// Returns: { tier: { ... "Gold" ... }, referralsNeeded: 10 }
+```
+
 ## Plugin Options
 
 | Option | Type | Default | Description |
@@ -144,9 +212,11 @@ export const auth = betterAuth({
 | `commissionType` | `"percentage" \| "fixed"` | Required | Whether rate is a percentage or fixed amount |
 | `commissionDurationMonths` | `number` | `12` | How long to track recurring commissions |
 | `cookieDurationDays` | `number` | `30` | Cookie duration for attribution |
+| `commissionTiers` | `CommissionTier[]` | - | Array of tier definitions for tiered commissions |
 | `onReferralSignup` | `function` | - | Callback when a referral signs up |
 | `onReferralConversion` | `function` | - | Callback when a referral converts |
 | `onRecurringCommission` | `function` | - | Callback when a recurring commission is recorded |
+| `onTierUpgrade` | `function` | - | Callback when an affiliate reaches a new tier |
 
 ## API Endpoints
 
