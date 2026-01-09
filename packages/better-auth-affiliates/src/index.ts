@@ -245,7 +245,7 @@ export function parseAffiliateCode(request?: Request | null): string | null {
 	const cookieHeader = request.headers.get("cookie")
 	if (cookieHeader) {
 		const match = cookieHeader.match(/affiliateCode=([^;]+)/)
-		if (match) return match[1]
+		if (match?.[1]) return match[1]
 	}
 
 	// Check header

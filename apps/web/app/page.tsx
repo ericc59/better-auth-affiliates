@@ -286,8 +286,8 @@ export default function LandingPage() {
 							<Link href="https://github.com" className="transition-colors hover:text-foreground">
 								GitHub
 							</Link>
-							<Link href="#" className="transition-colors hover:text-foreground">
-								Documentation
+							<Link href="/elements" className="transition-colors hover:text-foreground">
+								Components
 							</Link>
 							<span>MIT License</span>
 						</div>

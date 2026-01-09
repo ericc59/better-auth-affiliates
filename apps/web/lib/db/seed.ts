@@ -1,8 +1,17 @@
 import { drizzle } from "drizzle-orm/postgres-js"
 import postgres from "postgres"
-import { affiliateLinks, referrals } from "./schema"
+import { account, affiliateLinks, referrals, user } from "./schema"
 
 const connectionString = process.env.DATABASE_URL!
+
+// Simple hash function for demo purposes (in production, Better Auth handles this)
+async function hashPassword(password: string): Promise<string> {
+	const encoder = new TextEncoder()
+	const data = encoder.encode(password)
+	const hashBuffer = await crypto.subtle.digest("SHA-256", data)
+	const hashArray = Array.from(new Uint8Array(hashBuffer))
+	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("")
+}
 
 async function seed() {
 	const client = postgres(connectionString)
@@ -10,9 +19,53 @@ async function seed() {
 
 	console.log("Seeding database...")
 
-	// Clear existing data
+	// Clear existing data (in correct order due to foreign keys)
 	await db.delete(referrals)
 	await db.delete(affiliateLinks)
+	await db.delete(account)
+	await db.delete(user)
+
+	// Create admin user
+	const adminId = "admin-user-id-12345"
+	const adminPassword = await hashPassword("admin123")
+
+	await db.insert(user).values({
+		id: adminId,
+		name: "Admin User",
+		email: "admin@example.com",
+		emailVerified: true,
+	})
+
+	await db.insert(account).values({
+		id: "account-" + adminId,
+		userId: adminId,
+		accountId: "admin@example.com",
+		providerId: "credential",
+		password: adminPassword,
+	})
+
+	console.log("Created admin user: admin@example.com / admin123")
+
+	// Create demo user
+	const demoId = "demo-user-id-67890"
+	const demoPassword = await hashPassword("demo123")
+
+	await db.insert(user).values({
+		id: demoId,
+		name: "Demo User",
+		email: "demo@example.com",
+		emailVerified: true,
+	})
+
+	await db.insert(account).values({
+		id: "account-" + demoId,
+		userId: demoId,
+		accountId: "demo@example.com",
+		providerId: "credential",
+		password: demoPassword,
+	})
+
+	console.log("Created demo user: demo@example.com / demo123")
 
 	// Create demo affiliate links
 	const [affiliateLink1] = await db
@@ -20,6 +73,7 @@ async function seed() {
 		.values({
 			code: "DEMO2024",
 			name: "Demo Partner Program",
+			userId: demoId, // Assign to demo user
 			commissionRate: "15.00",
 			commissionType: "percentage",
 			clickCount: 1247,

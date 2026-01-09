@@ -1,12 +1,43 @@
 {
 	"name": "better-auth-affiliates",
 	"version": "0.1.0",
+	"description": "A complete affiliate and referral system plugin for Better Auth",
 	"type": "module",
-	"main": "./src/index.ts",
-	"types": "./src/index.ts",
+	"main": "./dist/index.js",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"exports": {
-		".": "./src/index.ts",
-		"./client": "./src/client.ts"
+		".": {
+			"import": "./dist/index.js",
+			"types": "./dist/index.d.ts"
+		},
+		"./client": {
+			"import": "./dist/client.js",
+			"types": "./dist/client.d.ts"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"keywords": [
+		"better-auth",
+		"affiliate",
+		"referral",
+		"commission",
+		"stripe",
+		"auth",
+		"plugin"
+	],
+	"author": "",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/your-username/better-auth-affiliates"
+	},
+	"homepage": "https://github.com/your-username/better-auth-affiliates#readme",
+	"bugs": {
+		"url": "https://github.com/your-username/better-auth-affiliates/issues"
 	},
 	"dependencies": {
 		"zod": "^3.24.2"
@@ -19,17 +50,21 @@
 		"@workspace/typescript-config": "workspace:*",
 		"better-auth": "^1.4.10",
 		"prettier": "^3.7.4",
+		"tsup": "^8.0.0",
 		"turbo": "^2.6.3",
 		"typescript": "5.7.3",
 		"vitest": "^4.0.16"
 	},
 	"scripts": {
+		"build": "tsup",
+		"dev": "tsup --watch",
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"test:coverage": "vitest run --coverage",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
 		"typecheck": "tsc --noEmit",
-		"clean": "rm -rf node_modules && rm -rf .turbo"
+		"prepublishOnly": "npm run build",
+		"clean": "rm -rf node_modules dist .turbo"
 	}
 }

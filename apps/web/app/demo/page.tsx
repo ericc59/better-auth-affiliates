@@ -4,7 +4,8 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { signIn, signOut, useSession } from "@/lib/auth-client"
 import { AffiliateDashboard } from "@workspace/elements/components/affiliate-dashboard"
 import { Button } from "@workspace/ui/components/button"
-import { ArrowLeft, Github, Link2, Loader2, LogOut, Plus, Sparkles } from "lucide-react"
+import { Input } from "@workspace/ui/components/input"
+import { ArrowLeft, Github, Link2, Loader2, LogOut, Mail, Plus } from "lucide-react"
 import Link from "next/link"
 import { useEffect, useState } from "react"
 
@@ -39,6 +40,10 @@ export default function DemoPage() {
 		referrals: Referral[]
 	} | null>(null)
 	const [isLoading, setIsLoading] = useState(true)
+	const [email, setEmail] = useState("")
+	const [password, setPassword] = useState("")
+	const [isSigningIn, setIsSigningIn] = useState(false)
+	const [error, setError] = useState("")
 
 	useEffect(() => {
 		async function fetchData() {
@@ -75,8 +80,29 @@ export default function DemoPage() {
 			.filter((r) => r.status === "paid")
 			.reduce((sum, r) => sum + Number(r.amount || 0), 0) ?? 0
 
-	const handleSignIn = () => {
+	const handleGoogleSignIn = () => {
 		signIn.social({ provider: "google", callbackURL: "/demo" })
+	}
+
+	const handleEmailSignIn = async (e: React.FormEvent) => {
+		e.preventDefault()
+		setIsSigningIn(true)
+		setError("")
+
+		try {
+			const result = await signIn.email({
+				email,
+				password,
+				callbackURL: "/demo",
+			})
+			if (result.error) {
+				setError(result.error.message || "Sign in failed")
+			}
+		} catch {
+			setError("An error occurred during sign in")
+		} finally {
+			setIsSigningIn(false)
+		}
 	}
 
 	const handleSignOut = () => {
@@ -142,15 +168,9 @@ export default function DemoPage() {
 							<p className="text-muted-foreground">
 								{session?.user
 									? "Your real-time affiliate performance data."
-									: "Sign in with Google to see your affiliate dashboard."}
+									: "Sign in to see your affiliate dashboard."}
 							</p>
 						</div>
-						<Link href="/elements">
-							<Button variant="outline" className="gap-2">
-								<Sparkles className="size-4" />
-								View Components
-							</Button>
-						</Link>
 					</div>
 				</div>
 			</section>
@@ -163,16 +183,52 @@ export default function DemoPage() {
 						<p className="mt-4 text-sm text-muted-foreground">Loading...</p>
 					</div>
 				) : !session?.user ? (
-					<div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 py-20">
+					<div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 py-12">
 						<div className="mb-4 flex size-16 items-center justify-center rounded-full bg-muted">
 							<Link2 className="size-8 text-muted-foreground" />
 						</div>
 						<h2 className="mb-2 text-xl font-semibold">Sign in to continue</h2>
 						<p className="mb-6 max-w-md text-center text-muted-foreground">
-							Sign in with your Google account to view your affiliate dashboard and track your
-							referral performance.
+							Sign in to view your affiliate dashboard and track your referral performance.
 						</p>
-						<Button onClick={handleSignIn} size="lg" className="gap-2">
+
+						<form onSubmit={handleEmailSignIn} className="mb-6 w-full max-w-sm space-y-4">
+							<div className="space-y-2">
+								<Input
+									type="email"
+									placeholder="Email"
+									value={email}
+									onChange={(e) => setEmail(e.target.value)}
+									required
+								/>
+								<Input
+									type="password"
+									placeholder="Password"
+									value={password}
+									onChange={(e) => setPassword(e.target.value)}
+									required
+								/>
+							</div>
+							{error && (
+								<p className="text-center text-sm text-red-500">{error}</p>
+							)}
+							<Button type="submit" className="w-full gap-2" disabled={isSigningIn}>
+								{isSigningIn ? (
+									<Loader2 className="size-4 animate-spin" />
+								) : (
+									<Mail className="size-4" />
+								)}
+								Sign in with Email
+							</Button>
+						</form>
+
+						<div className="mb-6 flex w-full max-w-sm items-center gap-4">
+							<div className="h-px flex-1 bg-border" />
+							<span className="text-xs text-muted-foreground">or</span>
+							<div className="h-px flex-1 bg-border" />
+						</div>
+
+						<Button onClick={handleGoogleSignIn} variant="outline" size="lg" className="gap-2">
 							<svg className="size-5" viewBox="0 0 24 24">
 								<path
 									fill="currentColor"
@@ -193,6 +249,11 @@ export default function DemoPage() {
 							</svg>
 							Sign in with Google
 						</Button>
+
+						<div className="mt-8 rounded-lg border border-border bg-muted/50 p-4 text-center">
+							<p className="mb-1 text-xs font-medium text-muted-foreground">Demo credentials</p>
+							<code className="text-sm">demo@example.com / demo123</code>
+						</div>
 					</div>
 				) : affiliateData ? (
 					<div className="overflow-hidden rounded-lg border border-border bg-card p-6">
@@ -234,19 +295,12 @@ export default function DemoPage() {
 								better-auth-affiliates
 							</code>
 						</p>
-						<div className="flex items-center gap-2">
-							<Link href="/elements">
-								<Button variant="outline" size="sm">
-									Component Library
-								</Button>
-							</Link>
-							<Link href="/">
-								<Button variant="ghost" size="sm">
-									<ArrowLeft className="size-4" />
-									Back to Home
-								</Button>
-							</Link>
-						</div>
+						<Link href="/">
+							<Button variant="ghost" size="sm" className="gap-2">
+								<ArrowLeft className="size-4" />
+								Back to Home
+							</Button>
+						</Link>
 					</div>
 				</div>
 			</footer>
