@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest"
+import { type MockInstance, beforeEach, describe, expect, it, vi } from "vitest"
 import { affiliateClientPlugin } from "./client"
 
 describe("affiliateClientPlugin", () => {
@@ -32,6 +32,8 @@ describe("affiliateClientPlugin", () => {
 			expect(actions).toHaveProperty("deactivateLink")
 			expect(actions).toHaveProperty("recordConversion")
 			expect(actions).toHaveProperty("markCommissionsPaid")
+			expect(actions).toHaveProperty("getCommissions")
+			expect(actions).toHaveProperty("recordRecurringCommission")
 		})
 
 		describe("createLink", () => {
@@ -183,7 +185,7 @@ describe("affiliateClientPlugin", () => {
 		})
 
 		describe("markCommissionsPaid", () => {
-			it("should call fetch with correct endpoint and body", async () => {
+			it("should call fetch with correct endpoint and body with referralIds", async () => {
 				const plugin = affiliateClientPlugin()
 				const actions = plugin.getActions(mockFetch)
 
@@ -197,6 +199,20 @@ describe("affiliateClientPlugin", () => {
 				})
 			})
 
+			it("should call fetch with commissionIds", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.markCommissionsPaid({
+					commissionIds: ["comm-1", "comm-2"],
+				})
+
+				expect(mockFetch).toHaveBeenCalledWith("/affiliate/mark-paid", {
+					method: "POST",
+					body: { commissionIds: ["comm-1", "comm-2"] },
+				})
+			})
+
 			it("should handle empty referralIds array", async () => {
 				const plugin = affiliateClientPlugin()
 				const actions = plugin.getActions(mockFetch)
@@ -206,6 +222,125 @@ describe("affiliateClientPlugin", () => {
 				expect(mockFetch).toHaveBeenCalledWith("/affiliate/mark-paid", {
 					method: "POST",
 					body: { referralIds: [] },
+				})
+			})
+		})
+
+		describe("getCommissions", () => {
+			it("should call fetch with no params when none provided", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.getCommissions()
+
+				expect(mockFetch).toHaveBeenCalledWith("/affiliate/commissions?", {
+					method: "GET",
+				})
+			})
+
+			it("should include organizationId in query params", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.getCommissions({ organizationId: "org-123" })
+
+				expect(mockFetch).toHaveBeenCalledWith(
+					"/affiliate/commissions?organizationId=org-123",
+					{ method: "GET" },
+				)
+			})
+
+			it("should include status in query params", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.getCommissions({ status: "approved" })
+
+				expect(mockFetch).toHaveBeenCalledWith("/affiliate/commissions?status=approved", {
+					method: "GET",
+				})
+			})
+
+			it("should include pagination params", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.getCommissions({ limit: 10, offset: 20 })
+
+				expect(mockFetch).toHaveBeenCalledWith("/affiliate/commissions?limit=10&offset=20", {
+					method: "GET",
+				})
+			})
+
+			it("should include all params when provided", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.getCommissions({
+					organizationId: "org-123",
+					linkId: "link-456",
+					status: "paid",
+					limit: 25,
+					offset: 50,
+				})
+
+				expect(mockFetch).toHaveBeenCalledWith(
+					"/affiliate/commissions?organizationId=org-123&linkId=link-456&status=paid&limit=25&offset=50",
+					{ method: "GET" },
+				)
+			})
+		})
+
+		describe("recordRecurringCommission", () => {
+			it("should call fetch with stripeCustomerId", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.recordRecurringCommission({
+					stripeCustomerId: "cus_123",
+					paymentAmount: "49.99",
+				})
+
+				expect(mockFetch).toHaveBeenCalledWith("/affiliate/record-recurring", {
+					method: "POST",
+					body: { stripeCustomerId: "cus_123", paymentAmount: "49.99" },
+				})
+			})
+
+			it("should call fetch with referredUserId", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.recordRecurringCommission({
+					referredUserId: "user-123",
+					paymentAmount: "99.00",
+				})
+
+				expect(mockFetch).toHaveBeenCalledWith("/affiliate/record-recurring", {
+					method: "POST",
+					body: { referredUserId: "user-123", paymentAmount: "99.00" },
+				})
+			})
+
+			it("should include Stripe invoice and payment intent IDs", async () => {
+				const plugin = affiliateClientPlugin()
+				const actions = plugin.getActions(mockFetch)
+
+				await actions.recordRecurringCommission({
+					stripeCustomerId: "cus_123",
+					paymentAmount: "49.99",
+					stripeInvoiceId: "in_123",
+					stripePaymentIntentId: "pi_123",
+				})
+
+				expect(mockFetch).toHaveBeenCalledWith("/affiliate/record-recurring", {
+					method: "POST",
+					body: {
+						stripeCustomerId: "cus_123",
+						paymentAmount: "49.99",
+						stripeInvoiceId: "in_123",
+						stripePaymentIntentId: "pi_123",
+					},
 				})
 			})
 		})

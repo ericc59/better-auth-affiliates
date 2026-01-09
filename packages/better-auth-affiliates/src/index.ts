@@ -38,12 +38,31 @@ export interface Referral {
 	referrerId: string | null
 	referrerOrganizationId: string | null
 	referredUserId: string
+	stripeCustomerId: string | null
 	status: "pending" | "active" | "churned" | "expired"
 	commissionEarned: string
 	commissionPaid: boolean
 	signedUpAt: Date
 	convertedAt: Date | null
 	expiresAt: Date | null
+	createdAt: Date
+	updatedAt: Date
+}
+
+/**
+ * Commission record for tracking individual payments (especially recurring)
+ */
+export interface AffiliateCommission {
+	id: string
+	referralId: string
+	affiliateLinkId: string
+	amount: string
+	paymentAmount: string
+	stripeInvoiceId: string | null
+	stripePaymentIntentId: string | null
+	type: "initial" | "recurring"
+	status: "pending" | "approved" | "paid" | "rejected"
+	paidAt: Date | null
 	createdAt: Date
 	updatedAt: Date
 }
@@ -87,6 +106,49 @@ export interface AffiliatePluginOptions {
 		affiliateLink: AffiliateLink
 		commissionAmount: string
 	}) => Promise<void>
+	/**
+	 * Optional callback when a recurring commission is recorded
+	 */
+	onRecurringCommission?: (data: {
+		referral: Referral
+		affiliateLink: AffiliateLink
+		commission: AffiliateCommission
+	}) => Promise<void>
+}
+
+/**
+ * Calculate commission amount based on link settings
+ */
+export function calculateCommission(
+	link: AffiliateLink,
+	paymentAmount: string | number,
+): string {
+	if (link.commissionType === "percentage") {
+		const rate = Number.parseFloat(link.commissionRate) / 100
+		const payment = Number.parseFloat(String(paymentAmount))
+		return (payment * rate).toFixed(2)
+	}
+	return link.fixedAmount || link.commissionRate
+}
+
+/**
+ * Parse affiliate code from various sources
+ */
+export function parseAffiliateCode(request?: Request | null): string | null {
+	if (!request) return null
+
+	// Check cookie
+	const cookieHeader = request.headers.get("cookie")
+	if (cookieHeader) {
+		const match = cookieHeader.match(/affiliateCode=([^;]+)/)
+		if (match) return match[1]
+	}
+
+	// Check header
+	const headerCode = request.headers.get("x-affiliate-code")
+	if (headerCode) return headerCode
+
+	return null
 }
 
 /**
@@ -97,6 +159,7 @@ export interface AffiliatePluginOptions {
  * - Track referral clicks, signups, and conversions
  * - Calculate commissions on subscription payments
  * - Support both user-level and organization-level affiliates
+ * - Stripe integration for automatic conversion tracking
  * - Works with any database adapter supported by Better Auth
  */
 export const affiliatePlugin = (options: AffiliatePluginOptions) => {
@@ -107,6 +170,7 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 		cookieDurationDays = 30,
 		onReferralSignup,
 		onReferralConversion,
+		onRecurringCommission,
 	} = options
 
 	return {
@@ -223,6 +287,10 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 							onDelete: "cascade" as const,
 						},
 					},
+					stripeCustomerId: {
+						type: "string" as const,
+						required: false,
+					},
 					status: {
 						type: "string" as const,
 						required: false,
@@ -244,6 +312,56 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 						required: false,
 					},
 					expiresAt: {
+						type: "date" as const,
+						required: false,
+					},
+				},
+			},
+			affiliateCommission: {
+				fields: {
+					referralId: {
+						type: "string" as const,
+						required: true,
+						references: {
+							model: "referral",
+							field: "id",
+							onDelete: "cascade" as const,
+						},
+					},
+					affiliateLinkId: {
+						type: "string" as const,
+						required: true,
+						references: {
+							model: "affiliateLink",
+							field: "id",
+							onDelete: "cascade" as const,
+						},
+					},
+					amount: {
+						type: "string" as const,
+						required: true,
+					},
+					paymentAmount: {
+						type: "string" as const,
+						required: true,
+					},
+					stripeInvoiceId: {
+						type: "string" as const,
+						required: false,
+					},
+					stripePaymentIntentId: {
+						type: "string" as const,
+						required: false,
+					},
+					type: {
+						type: "string" as const,
+						required: true,
+					},
+					status: {
+						type: "string" as const,
+						required: false,
+					},
+					paidAt: {
 						type: "date" as const,
 						required: false,
 					},
@@ -461,26 +579,23 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 						limit: 10,
 					})
 
-					// Get unpaid commission
-					const unpaidReferrals = await adapter.findMany<Referral>({
-						model: "referral",
-						where: organizationId
-							? [
-									{ field: "referrerOrganizationId", value: organizationId },
-									{ field: "commissionPaid", value: false },
-									{ field: "status", value: "active" },
-								]
-							: [
-									{ field: "referrerId", value: userId },
-									{ field: "commissionPaid", value: false },
-									{ field: "status", value: "active" },
-								],
-					})
+					// Get unpaid commission from commission records
+					const linkIds = links.map((l) => l.id)
+					let unpaidCommission = 0
 
-					const unpaidCommission = unpaidReferrals.reduce(
-						(sum, ref) => sum + (Number(ref.commissionEarned) || 0),
-						0,
-					)
+					for (const lid of linkIds) {
+						const unpaidCommissions = await adapter.findMany<AffiliateCommission>({
+							model: "affiliateCommission",
+							where: [
+								{ field: "affiliateLinkId", value: lid },
+								{ field: "status", value: "approved" },
+							],
+						})
+						unpaidCommission += unpaidCommissions.reduce(
+							(sum, c) => sum + (Number(c.amount) || 0),
+							0,
+						)
+					}
 
 					return ctx.json({
 						success: true,
@@ -503,6 +618,75 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 							})),
 							recentReferrals,
 						},
+					})
+				},
+			),
+
+			/**
+			 * Get commission history
+			 * GET /api/auth/affiliate/commissions
+			 */
+			getCommissions: createAuthEndpoint(
+				"/affiliate/commissions",
+				{
+					method: "GET",
+					use: [sessionMiddleware],
+					query: z.object({
+						organizationId: z.string().optional(),
+						linkId: z.string().optional(),
+						status: z.enum(["pending", "approved", "paid", "rejected"]).optional(),
+						limit: z.string().optional(),
+						offset: z.string().optional(),
+					}),
+				},
+				async (ctx) => {
+					const adapter = ctx.context.adapter
+					const userId = ctx.context.session.user.id
+					const { organizationId, linkId, status, limit, offset } = ctx.query || {}
+
+					// Get links for user/org
+					type WhereClause = { field: string; value: string | boolean }
+					let linksWhere: WhereClause[]
+					if (linkId) {
+						linksWhere = [{ field: "id", value: linkId }]
+					} else if (organizationId) {
+						linksWhere = [{ field: "organizationId", value: organizationId }]
+					} else {
+						linksWhere = [{ field: "userId", value: userId }]
+					}
+
+					const links = await adapter.findMany<AffiliateLink>({
+						model: "affiliateLink",
+						where: linksWhere,
+					})
+
+					const linkIds = links.map((l) => l.id)
+					const allCommissions: AffiliateCommission[] = []
+
+					for (const lid of linkIds) {
+						const where: WhereClause[] = [{ field: "affiliateLinkId", value: lid }]
+						if (status) {
+							where.push({ field: "status", value: status })
+						}
+
+						const commissions = await adapter.findMany<AffiliateCommission>({
+							model: "affiliateCommission",
+							where,
+							sortBy: { field: "createdAt", direction: "desc" },
+							limit: limit ? Number.parseInt(limit) : 50,
+							offset: offset ? Number.parseInt(offset) : 0,
+						})
+						allCommissions.push(...commissions)
+					}
+
+					// Sort by createdAt desc
+					allCommissions.sort(
+						(a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+					)
+
+					return ctx.json({
+						success: true,
+						commissions: allCommissions.slice(0, limit ? Number.parseInt(limit) : 50),
 					})
 				},
 			),
@@ -571,11 +755,20 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 					body: z.object({
 						referredUserId: z.string(),
 						paymentAmount: z.string(),
+						stripeCustomerId: z.string().optional(),
+						stripeInvoiceId: z.string().optional(),
+						stripePaymentIntentId: z.string().optional(),
 					}),
 				},
 				async (ctx) => {
 					const adapter = ctx.context.adapter
-					const { referredUserId, paymentAmount } = ctx.body
+					const {
+						referredUserId,
+						paymentAmount,
+						stripeCustomerId,
+						stripeInvoiceId,
+						stripePaymentIntentId,
+					} = ctx.body
 
 					// Find the referral
 					const referral = await adapter.findOne<Referral>({
@@ -604,20 +797,13 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 					}
 
 					// Calculate commission
-					let commissionAmount: string
-					if (link.commissionType === "percentage") {
-						const rate = Number.parseFloat(link.commissionRate) / 100
-						const payment = Number.parseFloat(paymentAmount)
-						commissionAmount = (payment * rate).toFixed(2)
-					} else {
-						commissionAmount = link.fixedAmount || link.commissionRate
-					}
+					const commissionAmount = calculateCommission(link, paymentAmount)
 
 					const now = new Date()
 					const expiresAt = new Date()
 					expiresAt.setMonth(expiresAt.getMonth() + commissionDurationMonths)
 
-					// Update referral status
+					// Update referral status and store Stripe customer ID
 					await adapter.update<Referral>({
 						model: "referral",
 						where: [{ field: "id", value: referral.id }],
@@ -625,7 +811,26 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 							status: "active",
 							convertedAt: now,
 							commissionEarned: commissionAmount,
+							stripeCustomerId: stripeCustomerId || referral.stripeCustomerId,
 							expiresAt,
+						},
+					})
+
+					// Create commission record
+					await adapter.create<AffiliateCommission>({
+						model: "affiliateCommission",
+						data: {
+							referralId: referral.id,
+							affiliateLinkId: link.id,
+							amount: commissionAmount,
+							paymentAmount,
+							stripeInvoiceId: stripeInvoiceId || null,
+							stripePaymentIntentId: stripePaymentIntentId || null,
+							type: "initial",
+							status: "approved",
+							paidAt: null,
+							createdAt: now,
+							updatedAt: now,
 						},
 					})
 
@@ -657,13 +862,174 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 							}
 						} catch (error) {
 							console.error("[Affiliate] onReferralConversion callback error:", error)
-							// Don't throw - callback failure shouldn't block conversion
 						}
 					}
 
 					return ctx.json({
 						success: true,
 						commissionAmount,
+					})
+				},
+			),
+
+			/**
+			 * Record a recurring commission (for subscription renewals)
+			 * POST /api/auth/affiliate/record-recurring
+			 */
+			recordRecurringCommission: createAuthEndpoint(
+				"/affiliate/record-recurring",
+				{
+					method: "POST",
+					body: z.object({
+						stripeCustomerId: z.string().optional(),
+						referredUserId: z.string().optional(),
+						paymentAmount: z.string(),
+						stripeInvoiceId: z.string().optional(),
+						stripePaymentIntentId: z.string().optional(),
+					}),
+				},
+				async (ctx) => {
+					const adapter = ctx.context.adapter
+					const {
+						stripeCustomerId,
+						referredUserId,
+						paymentAmount,
+						stripeInvoiceId,
+						stripePaymentIntentId,
+					} = ctx.body
+
+					// Find the referral by Stripe customer ID or user ID
+					let referral: Referral | null = null
+
+					if (stripeCustomerId) {
+						referral = await adapter.findOne<Referral>({
+							model: "referral",
+							where: [{ field: "stripeCustomerId", value: stripeCustomerId }],
+						})
+					}
+
+					if (!referral && referredUserId) {
+						referral = await adapter.findOne<Referral>({
+							model: "referral",
+							where: [{ field: "referredUserId", value: referredUserId }],
+						})
+					}
+
+					if (!referral) {
+						return ctx.json({
+							success: false,
+							message: "No referral found",
+						})
+					}
+
+					// Check if referral is still active and not expired
+					if (referral.status !== "active") {
+						return ctx.json({
+							success: false,
+							message: "Referral is not active",
+						})
+					}
+
+					if (referral.expiresAt && new Date(referral.expiresAt) < new Date()) {
+						return ctx.json({
+							success: false,
+							message: "Commission period has expired",
+						})
+					}
+
+					// Check for duplicate invoice
+					if (stripeInvoiceId) {
+						const existingCommission = await adapter.findOne<AffiliateCommission>({
+							model: "affiliateCommission",
+							where: [{ field: "stripeInvoiceId", value: stripeInvoiceId }],
+						})
+
+						if (existingCommission) {
+							return ctx.json({
+								success: false,
+								message: "Commission already recorded for this invoice",
+							})
+						}
+					}
+
+					// Find the affiliate link
+					const link = await adapter.findOne<AffiliateLink>({
+						model: "affiliateLink",
+						where: [{ field: "id", value: referral.affiliateLinkId }],
+					})
+
+					if (!link) {
+						return ctx.json({
+							success: false,
+							message: "Affiliate link not found",
+						})
+					}
+
+					// Calculate commission
+					const commissionAmount = calculateCommission(link, paymentAmount)
+
+					const now = new Date()
+
+					// Create commission record
+					const commission = await adapter.create<AffiliateCommission>({
+						model: "affiliateCommission",
+						data: {
+							referralId: referral.id,
+							affiliateLinkId: link.id,
+							amount: commissionAmount,
+							paymentAmount,
+							stripeInvoiceId: stripeInvoiceId || null,
+							stripePaymentIntentId: stripePaymentIntentId || null,
+							type: "recurring",
+							status: "approved",
+							paidAt: null,
+							createdAt: now,
+							updatedAt: now,
+						},
+					})
+
+					// Update referral total commission
+					const newTotal = (
+						Number.parseFloat(referral.commissionEarned || "0") +
+						Number.parseFloat(commissionAmount)
+					).toFixed(2)
+
+					await adapter.update<Referral>({
+						model: "referral",
+						where: [{ field: "id", value: referral.id }],
+						update: {
+							commissionEarned: newTotal,
+						},
+					})
+
+					// Update affiliate link stats
+					await adapter.update<AffiliateLink>({
+						model: "affiliateLink",
+						where: [{ field: "id", value: link.id }],
+						update: {
+							totalEarned: (
+								Number.parseFloat(link.totalEarned || "0") + Number.parseFloat(commissionAmount)
+							).toFixed(2),
+						},
+					})
+
+					// Call optional recurring callback
+					if (onRecurringCommission) {
+						try {
+							await onRecurringCommission({
+								referral,
+								affiliateLink: link,
+								commission,
+							})
+						} catch (error) {
+							console.error("[Affiliate] onRecurringCommission callback error:", error)
+						}
+					}
+
+					return ctx.json({
+						success: true,
+						commissionAmount,
+						commissionId: commission.id,
 					})
 				},
 			),
@@ -677,27 +1043,48 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 				{
 					method: "POST",
 					body: z.object({
-						referralIds: z.array(z.string()),
+						commissionIds: z.array(z.string()).optional(),
+						referralIds: z.array(z.string()).optional(),
 					}),
 				},
 				async (ctx) => {
 					const adapter = ctx.context.adapter
-					const { referralIds } = ctx.body
+					const { commissionIds, referralIds } = ctx.body
+					const now = new Date()
+					let updatedCount = 0
 
-					// Update each referral
-					for (const referralId of referralIds) {
-						await adapter.update<Referral>({
-							model: "referral",
-							where: [{ field: "id", value: referralId }],
-							update: {
-								commissionPaid: true,
-							},
-						})
+					// Mark commission records as paid
+					if (commissionIds && commissionIds.length > 0) {
+						for (const commissionId of commissionIds) {
+							await adapter.update<AffiliateCommission>({
+								model: "affiliateCommission",
+								where: [{ field: "id", value: commissionId }],
+								update: {
+									status: "paid",
+									paidAt: now,
+								},
+							})
+							updatedCount++
+						}
+					}
+
+					// Also support legacy referralIds for backwards compatibility
+					if (referralIds && referralIds.length > 0) {
+						for (const referralId of referralIds) {
+							await adapter.update<Referral>({
+								model: "referral",
+								where: [{ field: "id", value: referralId }],
+								update: {
+									commissionPaid: true,
+								},
+							})
+							updatedCount++
+						}
 					}
 
 					return ctx.json({
 						success: true,
-						updatedCount: referralIds.length,
+						updatedCount,
 					})
 				},
 			),
@@ -806,6 +1193,7 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 									referrerId: link.userId || null,
 									referrerOrganizationId: link.organizationId || null,
 									referredUserId: newUserId,
+									stripeCustomerId: null,
 									status: "pending",
 									commissionEarned: "0",
 									commissionPaid: false,
@@ -866,3 +1254,177 @@ export const affiliatePlugin = (options: AffiliatePluginOptions) => {
 }
 
 export type AffiliatePluginType = ReturnType<typeof affiliatePlugin>
+
+/**
+ * Stripe Integration Helpers
+ *
+ * Use these helpers with the Better Auth Stripe plugin to automatically
+ * track conversions and recurring commissions.
+ *
+ * @example
+ * ```typescript
+ * import { stripe } from "@better-auth/stripe"
+ * import { affiliatePlugin, stripeIntegration } from "better-auth-affiliates"
+ *
+ * export const auth = betterAuth({
+ *   plugins: [
+ *     stripe({
+ *       stripeSecret: process.env.STRIPE_SECRET_KEY,
+ *       stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+ *       createCustomerOnSignUp: true,
+ *
+ *       // Pass affiliate code to Stripe checkout
+ *       async getCheckoutSessionParams({ user, request }) {
+ *         return stripeIntegration.getCheckoutSessionParams(request)
+ *       },
+ *
+ *       // Auto-record conversion on subscription complete
+ *       async onSubscriptionComplete({ subscription, user, stripeSubscription }) {
+ *         await stripeIntegration.handleSubscriptionComplete({
+ *           auth,
+ *           user,
+ *           stripeSubscription,
+ *         })
+ *       },
+ *
+ *       // Track recurring payments
+ *       async onEvent({ event }) {
+ *         await stripeIntegration.handleStripeEvent({ auth, event })
+ *       },
+ *     }),
+ *
+ *     affiliatePlugin({
+ *       commissionRate: "30.00",
+ *       commissionType: "percentage",
+ *     }),
+ *   ],
+ * })
+ * ```
+ */
+export const stripeIntegration = {
+	/**
+	 * Get checkout session params with affiliate code metadata
+	 * Use this in the Stripe plugin's getCheckoutSessionParams callback
+	 */
+	getCheckoutSessionParams(request?: Request | null): {
+		metadata?: { affiliateCode?: string }
+	} {
+		const affiliateCode = parseAffiliateCode(request)
+		if (!affiliateCode) return {}
+
+		return {
+			metadata: {
+				affiliateCode,
+			},
+		}
+	},
+
+	/**
+	 * Handle subscription complete event from Stripe plugin
+	 * Records the initial conversion and commission
+	 */
+	async handleSubscriptionComplete<T extends { api: { recordConversion: Function } }>({
+		auth,
+		user,
+		stripeSubscription,
+	}: {
+		auth: T
+		user: { id: string }
+		stripeSubscription: {
+			id: string
+			customer: string
+			metadata?: { affiliateCode?: string } | null
+			items: {
+				data: Array<{
+					price: {
+						unit_amount: number | null
+					}
+				}>
+			}
+		}
+	}): Promise<{ success: boolean; commissionAmount?: string }> {
+		// Get affiliate code from subscription metadata
+		const affiliateCode = stripeSubscription.metadata?.affiliateCode
+		if (!affiliateCode) {
+			return { success: false }
+		}
+
+		// Calculate payment amount from subscription
+		const paymentAmount =
+			stripeSubscription.items.data[0]?.price?.unit_amount != null
+				? (stripeSubscription.items.data[0].price.unit_amount / 100).toString()
+				: "0"
+
+		// Record conversion via the plugin endpoint
+		try {
+			const result = await auth.api.recordConversion({
+				body: {
+					referredUserId: user.id,
+					paymentAmount,
+					stripeCustomerId: String(stripeSubscription.customer),
+				},
+			})
+			return result
+		} catch (error) {
+			console.error("[Affiliate] Failed to record conversion:", error)
+			return { success: false }
+		}
+	},
+
+	/**
+	 * Handle Stripe webhook events for recurring commissions
+	 * Use this in the Stripe plugin's onEvent callback
+	 */
+	async handleStripeEvent<T extends { api: { recordRecurringCommission: Function } }>({
+		auth,
+		event,
+	}: {
+		auth: T
+		event: {
+			type: string
+			data: {
+				object: {
+					id?: string
+					customer?: string
+					amount_paid?: number
+					payment_intent?: string
+					subscription?: string
+					metadata?: { affiliateCode?: string } | null
+				}
+			}
+		}
+	}): Promise<{ success: boolean; commissionAmount?: string }> {
+		// Only handle invoice.paid events for recurring payments
+		if (event.type !== "invoice.paid") {
+			return { success: false }
+		}
+
+		const invoice = event.data.object
+		const stripeCustomerId = invoice.customer
+		const amountPaid = invoice.amount_paid
+
+		if (!stripeCustomerId || !amountPaid) {
+			return { success: false }
+		}
+
+		// Convert cents to dollars
+		const paymentAmount = (amountPaid / 100).toString()
+
+		try {
+			const result = await auth.api.recordRecurringCommission({
+				body: {
+					stripeCustomerId: String(stripeCustomerId),
+					paymentAmount,
+					stripeInvoiceId: invoice.id,
+					stripePaymentIntentId: invoice.payment_intent
+						? String(invoice.payment_intent)
+						: undefined,
+				},
+			})
+			return result
+		} catch (error) {
+			console.error("[Affiliate] Failed to record recurring commission:", error)
+			return { success: false }
+		}
+	},
+}

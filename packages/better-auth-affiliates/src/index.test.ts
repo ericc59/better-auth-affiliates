@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest"
-import { affiliatePlugin } from "./index"
+import {
+	affiliatePlugin,
+	calculateCommission,
+	parseAffiliateCode,
+	stripeIntegration,
+	type AffiliateLink,
+} from "./index"
 
 describe("affiliatePlugin", () => {
 	describe("plugin configuration", () => {
@@ -25,9 +31,11 @@ describe("affiliatePlugin", () => {
 			expect(plugin.endpoints).toHaveProperty("deactivateAffiliateLink")
 			expect(plugin.endpoints).toHaveProperty("recordConversion")
 			expect(plugin.endpoints).toHaveProperty("markCommissionsPaid")
+			expect(plugin.endpoints).toHaveProperty("getCommissions")
+			expect(plugin.endpoints).toHaveProperty("recordRecurringCommission")
 		})
 
-		it("should include database schema for affiliateLink and referral", () => {
+		it("should include database schema for affiliateLink, referral, and affiliateCommission", () => {
 			const plugin = affiliatePlugin({
 				commissionRate: "30.00",
 				commissionType: "percentage",
@@ -35,6 +43,7 @@ describe("affiliatePlugin", () => {
 
 			expect(plugin.schema).toHaveProperty("affiliateLink")
 			expect(plugin.schema).toHaveProperty("referral")
+			expect(plugin.schema).toHaveProperty("affiliateCommission")
 		})
 
 		it("should include hooks for signup tracking", () => {
@@ -97,6 +106,31 @@ describe("affiliatePlugin", () => {
 			expect(referralFields).toHaveProperty("signedUpAt")
 			expect(referralFields).toHaveProperty("convertedAt")
 			expect(referralFields).toHaveProperty("expiresAt")
+			expect(referralFields).toHaveProperty("stripeCustomerId")
+		})
+
+		it("should define affiliateCommission schema with all required fields", () => {
+			const plugin = affiliatePlugin({
+				commissionRate: "30.00",
+				commissionType: "percentage",
+			})
+
+			const commissionFields = plugin.schema.affiliateCommission.fields
+
+			expect(commissionFields).toHaveProperty("referralId")
+			expect(commissionFields.referralId.required).toBe(true)
+			expect(commissionFields).toHaveProperty("affiliateLinkId")
+			expect(commissionFields.affiliateLinkId.required).toBe(true)
+			expect(commissionFields).toHaveProperty("amount")
+			expect(commissionFields.amount.required).toBe(true)
+			expect(commissionFields).toHaveProperty("paymentAmount")
+			expect(commissionFields.paymentAmount.required).toBe(true)
+			expect(commissionFields).toHaveProperty("stripeInvoiceId")
+			expect(commissionFields).toHaveProperty("stripePaymentIntentId")
+			expect(commissionFields).toHaveProperty("type")
+			expect(commissionFields.type.required).toBe(true)
+			expect(commissionFields).toHaveProperty("status")
+			expect(commissionFields).toHaveProperty("paidAt")
 		})
 
 		it("should set up foreign key references correctly", () => {
@@ -176,12 +210,14 @@ describe("affiliatePlugin", () => {
 		it("should accept optional callbacks", () => {
 			const onReferralSignup = vi.fn()
 			const onReferralConversion = vi.fn()
+			const onRecurringCommission = vi.fn()
 
 			const plugin = affiliatePlugin({
 				commissionRate: "30.00",
 				commissionType: "percentage",
 				onReferralSignup,
 				onReferralConversion,
+				onRecurringCommission,
 			})
 
 			expect(plugin.id).toBe("affiliate")
@@ -603,5 +639,391 @@ describe("URL query string building", () => {
 		const params = new URLSearchParams()
 		params.set("name", "Test & Demo")
 		expect(params.toString()).toBe("name=Test+%26+Demo")
+	})
+})
+
+describe("calculateCommission function", () => {
+	const createMockLink = (
+		commissionType: "percentage" | "fixed",
+		commissionRate: string,
+		fixedAmount?: string,
+	): AffiliateLink => ({
+		id: "link-1",
+		code: "TEST",
+		name: "Test Link",
+		userId: "user-1",
+		organizationId: null,
+		commissionRate,
+		commissionType,
+		fixedAmount: fixedAmount || null,
+		clickCount: 0,
+		signupCount: 0,
+		paidReferralCount: 0,
+		totalEarned: "0",
+		isActive: true,
+		expiresAt: null,
+		createdAt: new Date(),
+		updatedAt: new Date(),
+	})
+
+	describe("percentage commission", () => {
+		it("should calculate 30% commission correctly", () => {
+			const link = createMockLink("percentage", "30.00")
+			const commission = calculateCommission(link, "100.00")
+			expect(commission).toBe("30.00")
+		})
+
+		it("should calculate 15% commission correctly", () => {
+			const link = createMockLink("percentage", "15.00")
+			const commission = calculateCommission(link, "49.99")
+			expect(commission).toBe("7.50")
+		})
+
+		it("should handle decimal payment amounts", () => {
+			const link = createMockLink("percentage", "20.00")
+			const commission = calculateCommission(link, "133.33")
+			expect(commission).toBe("26.67")
+		})
+
+		it("should handle numeric payment amount", () => {
+			const link = createMockLink("percentage", "25.00")
+			const commission = calculateCommission(link, 200)
+			expect(commission).toBe("50.00")
+		})
+	})
+
+	describe("fixed commission", () => {
+		it("should return fixed amount regardless of payment", () => {
+			const link = createMockLink("fixed", "50.00", "50.00")
+			const commission = calculateCommission(link, "100.00")
+			expect(commission).toBe("50.00")
+		})
+
+		it("should return fixed amount for any payment", () => {
+			const link = createMockLink("fixed", "25.00", "25.00")
+			const commission = calculateCommission(link, "9999.99")
+			expect(commission).toBe("25.00")
+		})
+
+		it("should fall back to commissionRate if fixedAmount is null", () => {
+			const link = createMockLink("fixed", "30.00", undefined)
+			const commission = calculateCommission(link, "100.00")
+			expect(commission).toBe("30.00")
+		})
+	})
+})
+
+describe("parseAffiliateCode function", () => {
+	it("should return null when request is null", () => {
+		const code = parseAffiliateCode(null)
+		expect(code).toBeNull()
+	})
+
+	it("should return null when request is undefined", () => {
+		const code = parseAffiliateCode(undefined)
+		expect(code).toBeNull()
+	})
+
+	it("should parse affiliate code from cookie", () => {
+		const request = new Request("https://example.com", {
+			headers: {
+				cookie: "affiliateCode=TEST123; session=abc",
+			},
+		})
+		const code = parseAffiliateCode(request)
+		expect(code).toBe("TEST123")
+	})
+
+	it("should parse affiliate code from x-affiliate-code header", () => {
+		const request = new Request("https://example.com", {
+			headers: {
+				"x-affiliate-code": "HEADER456",
+			},
+		})
+		const code = parseAffiliateCode(request)
+		expect(code).toBe("HEADER456")
+	})
+
+	it("should prefer cookie over header", () => {
+		const request = new Request("https://example.com", {
+			headers: {
+				cookie: "affiliateCode=COOKIE789",
+				"x-affiliate-code": "HEADER456",
+			},
+		})
+		const code = parseAffiliateCode(request)
+		expect(code).toBe("COOKIE789")
+	})
+
+	it("should return null when no affiliate code is present", () => {
+		const request = new Request("https://example.com", {
+			headers: {
+				cookie: "session=abc123",
+			},
+		})
+		const code = parseAffiliateCode(request)
+		expect(code).toBeNull()
+	})
+})
+
+describe("stripeIntegration", () => {
+	describe("getCheckoutSessionParams", () => {
+		it("should return empty object when request is null", () => {
+			const params = stripeIntegration.getCheckoutSessionParams(null)
+			expect(params).toEqual({})
+		})
+
+		it("should return empty object when no affiliate code is present", () => {
+			const request = new Request("https://example.com")
+			const params = stripeIntegration.getCheckoutSessionParams(request)
+			expect(params).toEqual({})
+		})
+
+		it("should return metadata with affiliate code from cookie", () => {
+			const request = new Request("https://example.com", {
+				headers: {
+					cookie: "affiliateCode=PROMO2024",
+				},
+			})
+			const params = stripeIntegration.getCheckoutSessionParams(request)
+			expect(params).toEqual({
+				metadata: {
+					affiliateCode: "PROMO2024",
+				},
+			})
+		})
+
+		it("should return metadata with affiliate code from header", () => {
+			const request = new Request("https://example.com", {
+				headers: {
+					"x-affiliate-code": "AFFILIATE123",
+				},
+			})
+			const params = stripeIntegration.getCheckoutSessionParams(request)
+			expect(params).toEqual({
+				metadata: {
+					affiliateCode: "AFFILIATE123",
+				},
+			})
+		})
+	})
+
+	describe("handleSubscriptionComplete", () => {
+		it("should return success false when no affiliate code in metadata", async () => {
+			const mockAuth = {
+				api: {
+					recordConversion: vi.fn(),
+				},
+			}
+
+			const result = await stripeIntegration.handleSubscriptionComplete({
+				auth: mockAuth,
+				user: { id: "user-123" },
+				stripeSubscription: {
+					id: "sub_123",
+					customer: "cus_123",
+					metadata: null,
+					items: { data: [{ price: { unit_amount: 4999 } }] },
+				},
+			})
+
+			expect(result).toEqual({ success: false })
+			expect(mockAuth.api.recordConversion).not.toHaveBeenCalled()
+		})
+
+		it("should call recordConversion when affiliate code is present", async () => {
+			const mockAuth = {
+				api: {
+					recordConversion: vi.fn().mockResolvedValue({ success: true, commissionAmount: "14.99" }),
+				},
+			}
+
+			const result = await stripeIntegration.handleSubscriptionComplete({
+				auth: mockAuth,
+				user: { id: "user-123" },
+				stripeSubscription: {
+					id: "sub_123",
+					customer: "cus_456",
+					metadata: { affiliateCode: "PARTNER100" },
+					items: { data: [{ price: { unit_amount: 4999 } }] },
+				},
+			})
+
+			expect(mockAuth.api.recordConversion).toHaveBeenCalledWith({
+				body: {
+					referredUserId: "user-123",
+					paymentAmount: "49.99",
+					stripeCustomerId: "cus_456",
+				},
+			})
+			expect(result).toEqual({ success: true, commissionAmount: "14.99" })
+		})
+
+		it("should handle subscription with zero amount", async () => {
+			const mockAuth = {
+				api: {
+					recordConversion: vi.fn().mockResolvedValue({ success: true }),
+				},
+			}
+
+			await stripeIntegration.handleSubscriptionComplete({
+				auth: mockAuth,
+				user: { id: "user-123" },
+				stripeSubscription: {
+					id: "sub_123",
+					customer: "cus_789",
+					metadata: { affiliateCode: "FREE" },
+					items: { data: [{ price: { unit_amount: null } }] },
+				},
+			})
+
+			expect(mockAuth.api.recordConversion).toHaveBeenCalledWith({
+				body: {
+					referredUserId: "user-123",
+					paymentAmount: "0",
+					stripeCustomerId: "cus_789",
+				},
+			})
+		})
+	})
+
+	describe("handleStripeEvent", () => {
+		it("should return success false for non-invoice.paid events", async () => {
+			const mockAuth = {
+				api: {
+					recordRecurringCommission: vi.fn(),
+				},
+			}
+
+			const result = await stripeIntegration.handleStripeEvent({
+				auth: mockAuth,
+				event: {
+					type: "customer.created",
+					data: { object: {} },
+				},
+			})
+
+			expect(result).toEqual({ success: false })
+			expect(mockAuth.api.recordRecurringCommission).not.toHaveBeenCalled()
+		})
+
+		it("should return success false when customer ID is missing", async () => {
+			const mockAuth = {
+				api: {
+					recordRecurringCommission: vi.fn(),
+				},
+			}
+
+			const result = await stripeIntegration.handleStripeEvent({
+				auth: mockAuth,
+				event: {
+					type: "invoice.paid",
+					data: {
+						object: {
+							id: "in_123",
+							amount_paid: 4999,
+						},
+					},
+				},
+			})
+
+			expect(result).toEqual({ success: false })
+		})
+
+		it("should call recordRecurringCommission for invoice.paid events", async () => {
+			const mockAuth = {
+				api: {
+					recordRecurringCommission: vi.fn().mockResolvedValue({ success: true, commissionAmount: "14.99" }),
+				},
+			}
+
+			const result = await stripeIntegration.handleStripeEvent({
+				auth: mockAuth,
+				event: {
+					type: "invoice.paid",
+					data: {
+						object: {
+							id: "in_123",
+							customer: "cus_456",
+							amount_paid: 4999,
+							payment_intent: "pi_789",
+						},
+					},
+				},
+			})
+
+			expect(mockAuth.api.recordRecurringCommission).toHaveBeenCalledWith({
+				body: {
+					stripeCustomerId: "cus_456",
+					paymentAmount: "49.99",
+					stripeInvoiceId: "in_123",
+					stripePaymentIntentId: "pi_789",
+				},
+			})
+			expect(result).toEqual({ success: true, commissionAmount: "14.99" })
+		})
+
+		it("should handle invoice without payment_intent", async () => {
+			const mockAuth = {
+				api: {
+					recordRecurringCommission: vi.fn().mockResolvedValue({ success: true }),
+				},
+			}
+
+			await stripeIntegration.handleStripeEvent({
+				auth: mockAuth,
+				event: {
+					type: "invoice.paid",
+					data: {
+						object: {
+							id: "in_456",
+							customer: "cus_789",
+							amount_paid: 2999,
+						},
+					},
+				},
+			})
+
+			expect(mockAuth.api.recordRecurringCommission).toHaveBeenCalledWith({
+				body: {
+					stripeCustomerId: "cus_789",
+					paymentAmount: "29.99",
+					stripeInvoiceId: "in_456",
+					stripePaymentIntentId: undefined,
+				},
+			})
+		})
+	})
+})
+
+describe("commission status values", () => {
+	const validStatuses = ["pending", "approved", "paid", "rejected"] as const
+
+	it("should have pending as valid status", () => {
+		expect(validStatuses.includes("pending")).toBe(true)
+	})
+
+	it("should have approved as valid status", () => {
+		expect(validStatuses.includes("approved")).toBe(true)
+	})
+
+	it("should have paid as valid status", () => {
+		expect(validStatuses.includes("paid")).toBe(true)
+	})
+
+	it("should have rejected as valid status", () => {
+		expect(validStatuses.includes("rejected")).toBe(true)
+	})
+})
+
+describe("commission type values", () => {
+	const validTypes = ["initial", "recurring"] as const
+
+	it("should have initial as valid type", () => {
+		expect(validTypes.includes("initial")).toBe(true)
+	})
+
+	it("should have recurring as valid type", () => {
+		expect(validTypes.includes("recurring")).toBe(true)
 	})
 })

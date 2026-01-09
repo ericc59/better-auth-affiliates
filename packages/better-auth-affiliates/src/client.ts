@@ -114,8 +114,59 @@ export const affiliateClientPlugin = () => {
 			/**
 			 * Mark commissions as paid (for payout processing)
 			 */
-			markCommissionsPaid: async (data: { referralIds: string[] }) => {
+			markCommissionsPaid: async (data: {
+				commissionIds?: string[]
+				referralIds?: string[]
+			}) => {
 				return await $fetch("/affiliate/mark-paid", {
+					method: "POST",
+					body: data,
+				})
+			},
+
+			/**
+			 * Get commission history
+			 */
+			getCommissions: async (data?: {
+				organizationId?: string
+				linkId?: string
+				status?: "pending" | "approved" | "paid" | "rejected"
+				limit?: number
+				offset?: number
+			}) => {
+				const params = new URLSearchParams()
+				if (data?.organizationId) {
+					params.set("organizationId", data.organizationId)
+				}
+				if (data?.linkId) {
+					params.set("linkId", data.linkId)
+				}
+				if (data?.status) {
+					params.set("status", data.status)
+				}
+				if (data?.limit) {
+					params.set("limit", data.limit.toString())
+				}
+				if (data?.offset) {
+					params.set("offset", data.offset.toString())
+				}
+				return await $fetch(`/affiliate/commissions?${params.toString()}`, {
+					method: "GET",
+				})
+			},
+
+			/**
+			 * Record a recurring commission (for subscription renewals)
+			 * This is typically called from your Stripe webhook handler
+			 */
+			recordRecurringCommission: async (data: {
+				stripeCustomerId?: string
+				referredUserId?: string
+				paymentAmount: string
+				stripeInvoiceId?: string
+				stripePaymentIntentId?: string
+			}) => {
+				return await $fetch("/affiliate/record-recurring", {
 					method: "POST",
 					body: data,
 				})

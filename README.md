@@ -6,6 +6,8 @@ A complete affiliate and referral system plugin for [Better Auth](https://better
 
 - **Affiliate Links** - Generate unique tracking codes with custom commission structures
 - **Click Tracking** - Monitor clicks, conversions, and revenue in real-time
+- **Stripe Integration** - Automatic conversion tracking and recurring commissions via Stripe webhooks
+- **Recurring Commissions** - Track commissions on subscription renewals for a configurable duration
 - **Partner Dashboard** - Pre-built React components for affiliates to track performance
 - **Better Auth Native** - Zero-config integration with your existing auth setup
 - **Type-Safe** - Full TypeScript support with Zod validation throughout
@@ -24,13 +26,15 @@ npm install better-auth-affiliates
 ```typescript
 // auth.ts
 import { betterAuth } from "better-auth"
-import { affiliates } from "better-auth-affiliates"
+import { affiliatePlugin } from "better-auth-affiliates"
 
 export const auth = betterAuth({
   plugins: [
-    affiliates({
-      defaultCommissionRate: 10,
-      cookieExpiration: 30 * 24 * 60 * 60, // 30 days
+    affiliatePlugin({
+      commissionRate: "30.00",        // 30% commission
+      commissionType: "percentage",    // or "fixed" for flat rate
+      commissionDurationMonths: 12,    // Earn commission for 12 months
+      cookieDurationDays: 30,          // 30-day attribution window
     }),
   ],
 })
@@ -42,22 +46,185 @@ export const auth = betterAuth({
 bun run db:push
 ```
 
-### 3. Use the pre-built components
+### 3. Add the client plugin
 
-```tsx
-import { AffiliateDashboard } from "@workspace/elements"
+```typescript
+// auth-client.ts
+import { createAuthClient } from "better-auth/client"
+import { affiliateClientPlugin } from "better-auth-affiliates/client"
 
-export default function MyAffiliatePage() {
-  return (
-    <AffiliateDashboard
-      affiliateLink={affiliateData}
-      referrals={referrals}
-      baseUrl="https://yourapp.com"
-      pendingEarnings={100}
-      availableForPayout={500}
-    />
-  )
+export const authClient = createAuthClient({
+  plugins: [affiliateClientPlugin()],
+})
+```
+
+### 4. Track affiliate clicks on your landing page
+
+```typescript
+// When a user visits with ?ref=CODE
+const code = new URLSearchParams(window.location.search).get("ref")
+if (code) {
+  await authClient.affiliate.trackClick({ code })
+  // Cookie is set automatically for attribution
 }
+```
+
+## Stripe Integration
+
+The plugin integrates seamlessly with the [Better Auth Stripe plugin](https://www.better-auth.com/docs/plugins/stripe) for automatic conversion tracking.
+
+### Setup with Stripe
+
+```typescript
+// auth.ts
+import { betterAuth } from "better-auth"
+import { stripe } from "@better-auth/stripe"
+import { affiliatePlugin, stripeIntegration } from "better-auth-affiliates"
+
+export const auth = betterAuth({
+  plugins: [
+    stripe({
+      stripeSecretKey: process.env.STRIPE_SECRET_KEY!,
+      stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET!,
+      createCustomerOnSignUp: true,
+
+      // Pass affiliate code to Stripe checkout metadata
+      getCheckoutSessionParams({ request }) {
+        return stripeIntegration.getCheckoutSessionParams(request)
+      },
+
+      // Automatically record conversion on first subscription payment
+      async onSubscriptionComplete({ subscription, user, stripeSubscription }) {
+        await stripeIntegration.handleSubscriptionComplete({
+          auth,
+          user,
+          stripeSubscription,
+        })
+      },
+
+      // Track recurring commissions on invoice.paid events
+      async onEvent({ event }) {
+        await stripeIntegration.handleStripeEvent({ auth, event })
+      },
+    }),
+
+    affiliatePlugin({
+      commissionRate: "30.00",
+      commissionType: "percentage",
+      commissionDurationMonths: 12,
+
+      // Optional callbacks for notifications
+      async onReferralSignup({ affiliateLink, referredUser, affiliateCode }) {
+        console.log(`New signup via affiliate ${affiliateCode}`)
+      },
+      async onReferralConversion({ referral, affiliateLink, commissionAmount }) {
+        console.log(`Conversion! Commission: $${commissionAmount}`)
+      },
+      async onRecurringCommission({ referral, affiliateLink, commission }) {
+        console.log(`Recurring commission: $${commission.amount}`)
+      },
+    }),
+  ],
+})
+```
+
+### How It Works
+
+1. **Affiliate Code Attribution**: When a user clicks an affiliate link, the code is stored in a cookie
+2. **Checkout Metadata**: The `stripeIntegration.getCheckoutSessionParams()` helper adds the affiliate code to Stripe checkout session metadata
+3. **Initial Conversion**: When a subscription is created, `handleSubscriptionComplete()` records the conversion and calculates commission
+4. **Recurring Commissions**: `handleStripeEvent()` listens for `invoice.paid` events and tracks recurring commissions
+5. **Commission Expiration**: Recurring commissions stop after `commissionDurationMonths` (configurable)
+
+## Plugin Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `commissionRate` | `string` | Required | Commission rate (e.g., "30.00" for 30%) |
+| `commissionType` | `"percentage" \| "fixed"` | Required | Whether rate is a percentage or fixed amount |
+| `commissionDurationMonths` | `number` | `12` | How long to track recurring commissions |
+| `cookieDurationDays` | `number` | `30` | Cookie duration for attribution |
+| `onReferralSignup` | `function` | - | Callback when a referral signs up |
+| `onReferralConversion` | `function` | - | Callback when a referral converts |
+| `onRecurringCommission` | `function` | - | Callback when a recurring commission is recorded |
+
+## API Endpoints
+
+The plugin adds the following endpoints to your Better Auth server:
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/affiliate/create-link` | POST | Required | Create a new affiliate link |
+| `/affiliate/links` | GET | Required | Get user's affiliate links |
+| `/affiliate/track-click` | POST | Public | Track a click on an affiliate link |
+| `/affiliate/stats` | GET | Required | Get affiliate statistics |
+| `/affiliate/commissions` | GET | Required | Get commission history |
+| `/affiliate/deactivate-link` | POST | Required | Deactivate an affiliate link |
+| `/affiliate/record-conversion` | POST | Public | Record a conversion (for webhooks) |
+| `/affiliate/record-recurring` | POST | Public | Record a recurring commission |
+| `/affiliate/mark-paid` | POST | Public | Mark commissions as paid |
+
+## Client API
+
+### Create an affiliate link
+
+```typescript
+const { link } = await authClient.affiliate.createLink({
+  code: "SARAH2025",
+  name: "Instagram Link",
+  organizationId: "org-123", // optional
+})
+```
+
+### Get affiliate links
+
+```typescript
+const { links } = await authClient.affiliate.getLinks({
+  organizationId: "org-123", // optional
+})
+```
+
+### Track a click
+
+```typescript
+await authClient.affiliate.trackClick({ code: "SARAH2025" })
+```
+
+### Get statistics
+
+```typescript
+const { stats } = await authClient.affiliate.getStats({
+  organizationId: "org-123", // optional
+  linkId: "link-456", // optional
+})
+
+// stats contains:
+// - totalClicks
+// - totalSignups
+// - totalPaidReferrals
+// - totalEarned
+// - unpaidCommission
+// - conversionRate
+// - links (array with per-link stats)
+// - recentReferrals
+```
+
+### Get commission history
+
+```typescript
+const { commissions } = await authClient.affiliate.getCommissions({
+  status: "approved", // "pending" | "approved" | "paid" | "rejected"
+  limit: 50,
+  offset: 0,
+})
+```
+
+### Mark commissions as paid
+
+```typescript
+await authClient.affiliate.markCommissionsPaid({
+  commissionIds: ["comm-1", "comm-2"],
+})
 ```
 
 ## Packages
@@ -66,6 +233,7 @@ This monorepo contains the following packages:
 
 | Package | Description |
 |---------|-------------|
+| `better-auth-affiliates` | Core plugin for Better Auth |
 | `@workspace/ui` | Base UI components built with shadcn/ui |
 | `@workspace/elements` | Affiliate-specific React components |
 | `web` | Demo application and documentation site |
@@ -154,6 +322,159 @@ Display a list of referrals with status badges.
   emptyMessage="No referrals yet"
 />
 ```
+
+## Database Schema
+
+The plugin automatically creates the required tables via Better Auth's schema system. If you need to manually define the schema (e.g., for Drizzle migrations), here's the complete schema:
+
+### Drizzle ORM Schema
+
+```typescript
+// schema.ts
+import { pgTable, text, integer, boolean, timestamp } from "drizzle-orm/pg-core"
+
+// Your existing user and organization tables from Better Auth
+export const user = pgTable("user", {
+  id: text("id").primaryKey(),
+  name: text("name"),
+  email: text("email").notNull().unique(),
+  // ... other Better Auth user fields
+})
+
+export const organization = pgTable("organization", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  // ... other Better Auth organization fields
+})
+
+// Affiliate tables
+export const affiliateLink = pgTable("affiliate_link", {
+  id: text("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  name: text("name"),
+  userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+  organizationId: text("organization_id").references(() => organization.id, { onDelete: "cascade" }),
+  commissionRate: text("commission_rate").notNull(),
+  commissionType: text("commission_type").notNull(), // "percentage" or "fixed"
+  fixedAmount: text("fixed_amount"),
+  clickCount: integer("click_count").default(0),
+  signupCount: integer("signup_count").default(0),
+  paidReferralCount: integer("paid_referral_count").default(0),
+  totalEarned: text("total_earned").default("0"),
+  isActive: boolean("is_active").default(true),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+})
+
+export const referral = pgTable("referral", {
+  id: text("id").primaryKey(),
+  affiliateLinkId: text("affiliate_link_id").notNull().references(() => affiliateLink.id, { onDelete: "cascade" }),
+  referrerId: text("referrer_id").references(() => user.id, { onDelete: "set null" }),
+  referrerOrganizationId: text("referrer_organization_id").references(() => organization.id, { onDelete: "set null" }),
+  referredUserId: text("referred_user_id").notNull().unique().references(() => user.id, { onDelete: "cascade" }),
+  stripeCustomerId: text("stripe_customer_id"),
+  status: text("status").default("pending"), // "pending", "active", "churned", "expired"
+  commissionEarned: text("commission_earned").default("0"),
+  commissionPaid: boolean("commission_paid").default(false),
+  signedUpAt: timestamp("signed_up_at").notNull(),
+  convertedAt: timestamp("converted_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+})
+
+export const affiliateCommission = pgTable("affiliate_commission", {
+  id: text("id").primaryKey(),
+  referralId: text("referral_id").notNull().references(() => referral.id, { onDelete: "cascade" }),
+  affiliateLinkId: text("affiliate_link_id").notNull().references(() => affiliateLink.id, { onDelete: "cascade" }),
+  amount: text("amount").notNull(),
+  paymentAmount: text("payment_amount").notNull(),
+  stripeInvoiceId: text("stripe_invoice_id"),
+  stripePaymentIntentId: text("stripe_payment_intent_id"),
+  type: text("type").notNull(), // "initial" or "recurring"
+  status: text("status").default("pending"), // "pending", "approved", "paid", "rejected"
+  paidAt: timestamp("paid_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+})
+```
+
+### Raw SQL Schema
+
+```sql
+-- Affiliate Links
+CREATE TABLE affiliate_link (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  name TEXT,
+  user_id TEXT REFERENCES "user"(id) ON DELETE CASCADE,
+  organization_id TEXT REFERENCES organization(id) ON DELETE CASCADE,
+  commission_rate TEXT NOT NULL,
+  commission_type TEXT NOT NULL,
+  fixed_amount TEXT,
+  click_count INTEGER DEFAULT 0,
+  signup_count INTEGER DEFAULT 0,
+  paid_referral_count INTEGER DEFAULT 0,
+  total_earned TEXT DEFAULT '0',
+  is_active BOOLEAN DEFAULT true,
+  expires_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Referrals
+CREATE TABLE referral (
+  id TEXT PRIMARY KEY,
+  affiliate_link_id TEXT NOT NULL REFERENCES affiliate_link(id) ON DELETE CASCADE,
+  referrer_id TEXT REFERENCES "user"(id) ON DELETE SET NULL,
+  referrer_organization_id TEXT REFERENCES organization(id) ON DELETE SET NULL,
+  referred_user_id TEXT NOT NULL UNIQUE REFERENCES "user"(id) ON DELETE CASCADE,
+  stripe_customer_id TEXT,
+  status TEXT DEFAULT 'pending',
+  commission_earned TEXT DEFAULT '0',
+  commission_paid BOOLEAN DEFAULT false,
+  signed_up_at TIMESTAMP NOT NULL,
+  converted_at TIMESTAMP,
+  expires_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Commission Records (for tracking individual payments)
+CREATE TABLE affiliate_commission (
+  id TEXT PRIMARY KEY,
+  referral_id TEXT NOT NULL REFERENCES referral(id) ON DELETE CASCADE,
+  affiliate_link_id TEXT NOT NULL REFERENCES affiliate_link(id) ON DELETE CASCADE,
+  amount TEXT NOT NULL,
+  payment_amount TEXT NOT NULL,
+  stripe_invoice_id TEXT,
+  stripe_payment_intent_id TEXT,
+  type TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  paid_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Indexes for performance
+CREATE INDEX idx_affiliate_link_code ON affiliate_link(code);
+CREATE INDEX idx_affiliate_link_user_id ON affiliate_link(user_id);
+CREATE INDEX idx_affiliate_link_organization_id ON affiliate_link(organization_id);
+CREATE INDEX idx_referral_affiliate_link_id ON referral(affiliate_link_id);
+CREATE INDEX idx_referral_referred_user_id ON referral(referred_user_id);
+CREATE INDEX idx_referral_stripe_customer_id ON referral(stripe_customer_id);
+CREATE INDEX idx_affiliate_commission_referral_id ON affiliate_commission(referral_id);
+CREATE INDEX idx_affiliate_commission_stripe_invoice_id ON affiliate_commission(stripe_invoice_id);
+```
+
+### Table Overview
+
+| Table | Description |
+|-------|-------------|
+| `affiliate_link` | Stores affiliate links with commission settings and stats |
+| `referral` | Tracks users who signed up via affiliate links |
+| `affiliate_commission` | Individual commission records for initial and recurring payments |
 
 ## Development
 
