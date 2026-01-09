@@ -1,5 +1,6 @@
 {
 	"name": "better-auth-affiliates-monorepo",
+	"url": "https://better-auth-affiliates.vercel.app",
 	"version": "0.1.0",
 	"private": true,
 	"author": "Eric Campbell <eric@campbell.ventures>",
