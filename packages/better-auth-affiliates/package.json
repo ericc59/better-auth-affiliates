@@ -16,28 +16,17 @@
 			"types": "./dist/client.d.ts"
 		}
 	},
-	"files": [
-		"dist",
-		"README.md"
-	],
-	"keywords": [
-		"better-auth",
-		"affiliate",
-		"referral",
-		"commission",
-		"stripe",
-		"auth",
-		"plugin"
-	],
+	"files": ["dist", "README.md"],
+	"keywords": ["better-auth", "affiliate", "referral", "commission", "stripe", "auth", "plugin"],
 	"author": "",
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/your-username/better-auth-affiliates"
+		"url": "https://github.com/ericc59/better-auth-affiliates"
 	},
-	"homepage": "https://github.com/your-username/better-auth-affiliates#readme",
+	"homepage": "https://github.com/ericc59/better-auth-affiliates#readme",
 	"bugs": {
-		"url": "https://github.com/your-username/better-auth-affiliates/issues"
+		"url": "https://github.com/ericc59/better-auth-affiliates/issues"
 	},
 	"dependencies": {
 		"zod": "^3.24.2"

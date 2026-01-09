@@ -22,7 +22,7 @@ npm install better-auth-affiliates
 
 ## Demo
 
-Try the [live demo](https://your-demo-url.vercel.app/demo) to see the affiliate dashboard in action.
+Try the [live demo](https://better-auth-affiliates.vercel.app/demo) to see the affiliate dashboard in action.
 
 **Demo credentials:**
 - Email: `demo@example.com`

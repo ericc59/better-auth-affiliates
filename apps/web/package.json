@@ -17,6 +17,7 @@
 		"db:seed": "bun run lib/db/seed.ts"
 	},
 	"dependencies": {
+		"@vercel/analytics": "^1.6.1",
 		"@workspace/elements": "workspace:*",
 		"@workspace/ui": "workspace:*",
 		"drizzle-orm": "^0.38.3",
