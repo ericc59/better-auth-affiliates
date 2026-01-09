@@ -40,8 +40,8 @@ export default function DemoPage() {
 		referrals: Referral[]
 	} | null>(null)
 	const [isLoading, setIsLoading] = useState(true)
-	const [email, setEmail] = useState("")
-	const [password, setPassword] = useState("")
+	const [email, setEmail] = useState("demo@example.com")
+	const [password, setPassword] = useState("demo123")
 	const [isSigningIn, setIsSigningIn] = useState(false)
 	const [error, setError] = useState("")
 
@@ -209,9 +209,7 @@ export default function DemoPage() {
 									required
 								/>
 							</div>
-							{error && (
-								<p className="text-center text-sm text-red-500">{error}</p>
-							)}
+							{error && <p className="text-center text-sm text-red-500">{error}</p>}
 							<Button type="submit" className="w-full gap-2" disabled={isSigningIn}>
 								{isSigningIn ? (
 									<Loader2 className="size-4 animate-spin" />
