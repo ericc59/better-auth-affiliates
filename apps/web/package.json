@@ -20,6 +20,7 @@
 		"@vercel/analytics": "^1.6.1",
 		"@workspace/elements": "workspace:*",
 		"@workspace/ui": "workspace:*",
+		"better-auth": "^1.7.27",
 		"drizzle-orm": "^0.38.3",
 		"geist": "^1.5.1",
 		"lucide-react": "^0.475.0",
